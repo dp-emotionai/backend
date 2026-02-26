@@ -1,0 +1,93 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id        Int        @id @default(autoincrement())
+  email     String     @unique
+  password  String
+
+  notes        Note[]
+  documents    Document[]
+  refreshTokens RefreshToken[]
+
+  groupMembers GroupMember[]
+  sessions     Session[]
+  analytics    Analytics[]
+
+  createdAt DateTime   @default(now())
+}
+
+model Note {
+  id        Int      @id @default(autoincrement())
+  title     String
+  content   String
+  pinned    Boolean  @default(false)
+  userId    Int
+  user      User     @relation(fields: [userId], references: [id])
+  createdAt DateTime @default(now())
+}
+
+model Document {
+  id        Int      @id @default(autoincrement())
+  filename  String
+  url       String
+  userId    Int
+  user      User     @relation(fields: [userId], references: [id])
+  createdAt DateTime @default(now())
+}
+model Group {
+  id          Int       @id @default(autoincrement())
+  name        String
+  description String?
+  members     GroupMember[]
+  rooms       Room[]
+  createdAt   DateTime  @default(now())
+}
+
+model GroupMember {
+  id       Int   @id @default(autoincrement())
+  user     User  @relation(fields: [userId], references: [id])
+  userId   Int
+  group    Group @relation(fields: [groupId], references: [id])
+  groupId  Int
+}
+
+model Room {
+  id        Int      @id @default(autoincrement())
+  title     String
+  active    Boolean  @default(true)
+  group     Group?   @relation(fields: [groupId], references: [id])
+  groupId   Int?
+  createdAt DateTime @default(now())
+}
+
+model Session {
+  id          Int       @id @default(autoincrement())
+  user        User      @relation(fields: [userId], references: [id])
+  userId      Int
+  duration    Int
+  engagement  Float
+  createdAt   DateTime  @default(now())
+}
+
+model Analytics {
+  id          Int       @id @default(autoincrement())
+  user        User      @relation(fields: [userId], references: [id])
+  userId      Int
+  score       Float
+  emotion     String?
+  createdAt   DateTime  @default(now())
+}
+model RefreshToken {
+  id        Int      @id @default(autoincrement())
+  token     String   @unique
+  user      User     @relation(fields: [userId], references: [id])
+  userId    Int
+  createdAt DateTime @default(now())
+}
