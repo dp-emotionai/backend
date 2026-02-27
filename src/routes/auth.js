@@ -16,7 +16,7 @@ const storage = multer.memoryStorage();
 const upload = multer({
     storage,
     limits: {
-        fileSize: 2 * 1024 * 1024, // 2MB max
+        fileSize: 2 * 1024 * 1024, // 2MB
     },
 });
 
@@ -31,6 +31,12 @@ router.post("/register", async (req, res) => {
         if (!email || !password || !name) {
             return res.status(400).json({
                 message: "Email, password and name are required",
+            });
+        }
+
+        if (password.length < 6) {
+            return res.status(400).json({
+                message: "Password must be at least 6 characters",
             });
         }
 
@@ -53,9 +59,9 @@ router.post("/register", async (req, res) => {
 
         const user = await prisma.user.create({
             data: {
-                email,
+                email: email.trim().toLowerCase(),
                 password: hashedPassword,
-                name,
+                name: name.trim(),
                 role: userRole,
             },
         });
@@ -86,8 +92,14 @@ router.post("/login", async (req, res) => {
     try {
         const { email, password } = req.body;
 
+        if (!email || !password) {
+            return res.status(400).json({
+                message: "Email and password required",
+            });
+        }
+
         const user = await prisma.user.findUnique({
-            where: { email },
+            where: { email: email.trim().toLowerCase() },
         });
 
         if (!user) {
@@ -171,15 +183,15 @@ router.put("/me", authMiddleware, async (req, res) => {
     try {
         const { name } = req.body;
 
-        if (!name) {
+        if (!name || name.trim().length < 2) {
             return res.status(400).json({
-                message: "Name is required",
+                message: "Valid name is required",
             });
         }
 
         const updatedUser = await prisma.user.update({
             where: { id: req.user.id },
-            data: { name },
+            data: { name: name.trim() },
             select: {
                 id: true,
                 email: true,
@@ -225,7 +237,7 @@ router.post(
                 message: "Avatar updated successfully",
             });
         } catch (error) {
-            console.error("AVATAR UPLOAD ERROR:", error);
+            console.error("AVATAR ERROR:", error);
             res.status(500).json({
                 message: "Upload failed",
             });
@@ -244,7 +256,7 @@ router.get("/avatar", authMiddleware, async (req, res) => {
             select: { avatar: true },
         });
 
-        if (!user?.avatar) {
+        if (!user || !user.avatar) {
             return res.status(404).json({
                 message: "No avatar found",
             });
@@ -259,6 +271,7 @@ router.get("/avatar", authMiddleware, async (req, res) => {
         });
     }
 });
+
 /* ================================
    CHANGE PASSWORD
 ================================ */
@@ -282,6 +295,12 @@ router.put("/change-password", authMiddleware, async (req, res) => {
         const user = await prisma.user.findUnique({
             where: { id: req.user.id },
         });
+
+        if (!user) {
+            return res.status(404).json({
+                message: "User not found",
+            });
+        }
 
         const validPassword = await bcrypt.compare(
             currentPassword,
@@ -309,6 +328,7 @@ router.put("/change-password", authMiddleware, async (req, res) => {
         });
     }
 });
+
 /* ================================
    DELETE ACCOUNT
 ================================ */
@@ -326,6 +346,12 @@ router.delete("/delete-account", authMiddleware, async (req, res) => {
         const user = await prisma.user.findUnique({
             where: { id: req.user.id },
         });
+
+        if (!user) {
+            return res.status(404).json({
+                message: "User not found",
+            });
+        }
 
         const validPassword = await bcrypt.compare(
             password,
