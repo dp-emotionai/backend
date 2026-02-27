@@ -7,18 +7,24 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
+enum Role {
+  USER
+  ADMIN
+}
+
 model User {
   id        Int        @id @default(autoincrement())
   email     String     @unique
   password  String
+  name      String?    // можно сделать обязательным: String
+  role      Role       @default(USER)
 
-  notes        Note[]
-  documents    Document[]
+  notes         Note[]
+  documents     Document[]
   refreshTokens RefreshToken[]
-
-  groupMembers GroupMember[]
-  sessions     Session[]
-  analytics    Analytics[]
+  groupMembers  GroupMember[]
+  sessions      Session[]
+  analytics     Analytics[]
 
   createdAt DateTime   @default(now())
 }

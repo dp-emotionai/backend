@@ -3,7 +3,7 @@ import prisma from "../utils/prisma.js";
 
 export default async function authMiddleware(req, res, next) {
     try {
-        const authHeader = req.headers.authorization;
+        const authHeader = req.headers.authorization || req.headers.Authorization;
 
         if (!authHeader || !authHeader.startsWith("Bearer ")) {
             return res.status(401).json({ message: "Unauthorized" });
@@ -22,6 +22,7 @@ export default async function authMiddleware(req, res, next) {
         }
 
         req.user = user;
+        req.userId = user.id; // <- чтобы работали роуты, которые ждут userId
 
         next();
     } catch (error) {

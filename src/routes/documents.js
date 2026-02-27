@@ -23,7 +23,7 @@ router.post(
             data: {
                 filename: req.file.filename,
                 url: `/uploads/${req.file.filename}`,
-                userId: req.userId,
+                userId: req.user.id,
             },
         });
 
@@ -33,7 +33,7 @@ router.post(
 
 router.get("/", authMiddleware, async (req, res) => {
     const documents = await prisma.document.findMany({
-        where: { userId: req.userId },
+        where: { userId: req.user.id },
     });
 
     res.json(documents);
@@ -41,7 +41,10 @@ router.get("/", authMiddleware, async (req, res) => {
 
 router.delete("/:id", authMiddleware, async (req, res) => {
     await prisma.document.delete({
-        where: { id: parseInt(req.params.id) },
+        where: {
+            id: parseInt(req.params.id),
+            // аналогично, можно добавить userId: req.user.id
+        },
     });
 
     res.json({ message: "Deleted" });

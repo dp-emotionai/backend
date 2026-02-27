@@ -7,7 +7,7 @@ const router = express.Router();
 
 router.post("/register", async (req, res) => {
     try {
-        const { email, password } = req.body;
+        const { email, password, name, role } = req.body;
 
         const existingUser = await prisma.user.findUnique({
             where: { email },
@@ -23,10 +23,20 @@ router.post("/register", async (req, res) => {
             data: {
                 email,
                 password: hashedPassword,
+                name: name || null,
+                role: role || "USER", // "USER" или "ADMIN" из enum Role
             },
         });
 
-        res.json({ message: "User created", user });
+        res.json({
+            message: "User created",
+            user: {
+                id: user.id,
+                email: user.email,
+                name: user.name,
+                role: user.role
+            }
+        });
     } catch (error) {
         res.status(500).json({ error: "Something went wrong" });
     }

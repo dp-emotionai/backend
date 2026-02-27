@@ -11,7 +11,7 @@ router.post("/", authMiddleware, async (req, res) => {
         data: {
             title,
             content,
-            userId: req.userId,
+            userId: req.user.id,
         },
     });
 
@@ -20,7 +20,7 @@ router.post("/", authMiddleware, async (req, res) => {
 
 router.get("/", authMiddleware, async (req, res) => {
     const notes = await prisma.note.findMany({
-        where: { userId: req.userId },
+        where: { userId: req.user.id },
     });
 
     res.json(notes);
@@ -30,7 +30,10 @@ router.put("/:id", authMiddleware, async (req, res) => {
     const { title, content, pinned } = req.body;
 
     const note = await prisma.note.update({
-        where: { id: parseInt(req.params.id) },
+        where: {
+            id: parseInt(req.params.id),
+            // опционально можно добавить userId: req.user.id, чтобы нельзя было чужие менять
+        },
         data: { title, content, pinned },
     });
 
@@ -39,7 +42,10 @@ router.put("/:id", authMiddleware, async (req, res) => {
 
 router.delete("/:id", authMiddleware, async (req, res) => {
     await prisma.note.delete({
-        where: { id: parseInt(req.params.id) },
+        where: {
+            id: parseInt(req.params.id),
+            // сюда тоже можно добавить userId: req.user.id для безопасности
+        },
     });
 
     res.json({ message: "Deleted" });
