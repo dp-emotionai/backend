@@ -21,15 +21,14 @@ app.use(cors());
 app.use(express.json());
 app.use("/uploads", express.static("uploads"));
 
-// ❗ БЕЗ /api
-app.use("/auth", authRoutes);
-app.use("/users", userRoutes);
-app.use("/notes", noteRoutes);
-app.use("/documents", documentRoutes);
-app.use("/groups", groupRoutes);
-app.use("/rooms", roomRoutes);
-app.use("/sessions", sessionRoutes);
-app.use("/analytics", analyticsRoutes);
+app.use("/api/auth", authRoutes);
+app.use("/api/users", userRoutes);
+app.use("/api/sessions", sessionRoutes);
+app.use("/api/analytics", analyticsRoutes);
+app.use("/api/rooms", roomRoutes);
+app.use("/api/groups", groupRoutes);
+app.use("/api/documents", documentRoutes);
+app.use("/api/notes", noteRoutes);
 
 const io = new Server(server, {
     cors: { origin: "*" }
