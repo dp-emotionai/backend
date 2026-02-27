@@ -377,4 +377,48 @@ router.delete("/delete-account", authMiddleware, async (req, res) => {
     }
 });
 
+/* ================================
+   CHANGE EMAIL
+================================ */
+
+router.put("/change-email", authMiddleware, async (req, res) => {
+    try {
+        const { email } = req.body;
+
+        if (!email) {
+            return res.status(400).json({
+                message: "Email is required",
+            });
+        }
+
+        const existingUser = await prisma.user.findUnique({
+            where: { email },
+        });
+
+        if (existingUser) {
+            return res.status(400).json({
+                message: "Email already in use",
+            });
+        }
+
+        const updatedUser = await prisma.user.update({
+            where: { id: req.user.id },
+            data: { email },
+            select: {
+                id: true,
+                email: true,
+                name: true,
+                role: true,
+            },
+        });
+
+        res.json(updatedUser);
+    } catch (error) {
+        console.error("CHANGE EMAIL ERROR:", error);
+        res.status(500).json({
+            message: "Failed to change email",
+        });
+    }
+});
+
 export default router;
