@@ -8,7 +8,8 @@ datasource db {
 }
 
 enum Role {
-  USER
+  STUDENT
+  TEACHER
   ADMIN
 }
 
@@ -16,8 +17,8 @@ model User {
   id        Int        @id @default(autoincrement())
   email     String     @unique
   password  String
-  name      String?    // можно сделать обязательным: String
-  role      Role       @default(USER)
+  name      String?
+  role      Role       @default(STUDENT)
 
   notes         Note[]
   documents     Document[]

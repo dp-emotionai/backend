@@ -4,30 +4,43 @@ import authMiddleware from "../middleware/authMiddleware.js";
 
 const router = express.Router();
 
-// создать сессию
+// Создать сессию
 router.post("/", authMiddleware, async (req, res) => {
-    const { duration, engagement } = req.body;
+    try {
+        const { duration, engagement } = req.body;
 
-    const session = await prisma.session.create({
-        data: {
-            duration,
-            engagement,
-            userId: req.user.id
-        }
-    });
+        const session = await prisma.session.create({
+            data: {
+                duration,
+                engagement,
+                userId: req.user.id
+            }
+        });
 
-    res.json(session);
+        res.status(201).json(session);
+    } catch (error) {
+        console.error(error);
+        res.status(500).json({ error: "Failed to create session" });
+    }
 });
 
-// получить сессии пользователя
-router.get("/user/:id", authMiddleware, async (req, res) => {
-    const sessions = await prisma.session.findMany({
-        where: {
-            userId: parseInt(req.params.id)
-        }
-    });
+// Получить свои сессии
+router.get("/my", authMiddleware, async (req, res) => {
+    try {
+        const sessions = await prisma.session.findMany({
+            where: {
+                userId: req.user.id
+            },
+            orderBy: {
+                createdAt: "desc"
+            }
+        });
 
-    res.json(sessions);
+        res.json(sessions);
+    } catch (error) {
+        console.error(error);
+        res.status(500).json({ error: "Failed to fetch sessions" });
+    }
 });
 
 export default router;

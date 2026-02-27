@@ -19,16 +19,22 @@ router.post("/register", async (req, res) => {
 
         const hashedPassword = await bcrypt.hash(password, 10);
 
+        // Разрешённые роли
+        const allowedRoles = ["STUDENT", "TEACHER"];
+
+        const userRole = allowedRoles.includes(role)
+            ? role
+            : "STUDENT";
+
         const user = await prisma.user.create({
             data: {
                 email,
                 password: hashedPassword,
                 name: name || null,
-                role: role || "USER",
+                role: userRole,
             },
         });
 
-        // ВАЖНО: статус 201
         return res.status(201).json({
             message: "User created",
             user: {
@@ -39,6 +45,7 @@ router.post("/register", async (req, res) => {
             },
         });
     } catch (error) {
+        console.error(error);
         return res.status(500).json({ error: "Something went wrong" });
     }
 });
