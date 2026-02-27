@@ -19,7 +19,7 @@ router.post("/register", async (req, res) => {
 
         const hashedPassword = await bcrypt.hash(password, 10);
 
-        // разрешённые роли
+        // Разрешённые роли
         const allowedRoles = ["STUDENT", "TEACHER"];
 
         const userRole = allowedRoles.includes(role)
@@ -45,8 +45,8 @@ router.post("/register", async (req, res) => {
             },
         });
     } catch (error) {
-        console.error("REGISTER ERROR:", error);
-        return res.status(500).json({ error: error.message });
+        console.error(error);
+        return res.status(500).json({ error: "Something went wrong" });
     }
 });
 
@@ -81,5 +81,26 @@ router.post("/login", async (req, res) => {
         }
     });
 });
+router.get("/me", authMiddleware, async (req, res) => {
+    try {
+        const user = await prisma.user.findUnique({
+            where: { id: req.user.id },
+            select: {
+                id: true,
+                name: true,
+                email: true,
+                role: true,
+                createdAt: true
+            }
+        });
 
+        if (!user) {
+            return res.status(404).json({ message: "User not found" });
+        }
+
+        res.json(user);
+    } catch (error) {
+        res.status(500).json({ message: "Server error" });
+    }
+});
 export default router;
