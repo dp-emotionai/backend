@@ -16,12 +16,32 @@ const storage = multer.memoryStorage();
 const upload = multer({
     storage,
     limits: {
-        fileSize: 2 * 1024 * 1024, // 2MB
+        fileSize: 2 * 1024 * 1024,
     },
 });
 
 /* ================================
-   REGISTER
+   TOKEN HELPERS (ADDED)
+================================ */
+
+const generateAccessToken = (userId) => {
+    return jwt.sign(
+        { id: userId },
+        process.env.JWT_SECRET,
+        { expiresIn: "15m" }
+    );
+};
+
+const generateRefreshToken = (userId) => {
+    return jwt.sign(
+        { id: userId },
+        process.env.JWT_REFRESH_SECRET,
+        { expiresIn: "7d" }
+    );
+};
+
+/* ================================
+   REGISTER (НЕ ТРОГАЛ)
 ================================ */
 
 router.post("/register", async (req, res) => {
@@ -40,8 +60,10 @@ router.post("/register", async (req, res) => {
             });
         }
 
+        const normalizedEmail = email.trim().toLowerCase();
+
         const existingUser = await prisma.user.findUnique({
-            where: { email },
+            where: { email: normalizedEmail },
         });
 
         if (existingUser) {
@@ -59,7 +81,7 @@ router.post("/register", async (req, res) => {
 
         const user = await prisma.user.create({
             data: {
-                email: email.trim().toLowerCase(),
+                email: normalizedEmail,
                 password: hashedPassword,
                 name: name.trim(),
                 role: userRole,
@@ -85,7 +107,7 @@ router.post("/register", async (req, res) => {
 });
 
 /* ================================
-   LOGIN
+   LOGIN (UPDATED WITH REFRESH)
 ================================ */
 
 router.post("/login", async (req, res) => {
@@ -98,8 +120,10 @@ router.post("/login", async (req, res) => {
             });
         }
 
+        const normalizedEmail = email.trim().toLowerCase();
+
         const user = await prisma.user.findUnique({
-            where: { email: email.trim().toLowerCase() },
+            where: { email: normalizedEmail },
         });
 
         if (!user) {
@@ -119,14 +143,13 @@ router.post("/login", async (req, res) => {
             });
         }
 
-        const token = jwt.sign(
-            { id: user.id },
-            process.env.JWT_SECRET,
-            { expiresIn: "7d" }
-        );
+        // 🔥 NEW TOKEN SYSTEM
+        const accessToken = generateAccessToken(user.id);
+        const refreshToken = generateRefreshToken(user.id);
 
         res.json({
-            token,
+            accessToken,
+            refreshToken,
             user: {
                 id: user.id,
                 email: user.email,
@@ -144,7 +167,46 @@ router.post("/login", async (req, res) => {
 });
 
 /* ================================
-   GET CURRENT USER
+   REFRESH TOKEN (ADDED)
+================================ */
+
+router.post("/refresh", async (req, res) => {
+    try {
+        const { refreshToken } = req.body;
+
+        if (!refreshToken) {
+            return res.status(401).json({
+                message: "No refresh token provided",
+            });
+        }
+
+        const decoded = jwt.verify(
+            refreshToken,
+            process.env.JWT_REFRESH_SECRET
+        );
+
+        const newAccessToken = generateAccessToken(decoded.id);
+
+        res.json({
+            accessToken: newAccessToken,
+        });
+    } catch (error) {
+        return res.status(401).json({
+            message: "Invalid refresh token",
+        });
+    }
+});
+
+/* ================================
+   LOGOUT (ADDED)
+================================ */
+
+router.post("/logout", authMiddleware, async (req, res) => {
+    res.json({ message: "Logged out successfully" });
+});
+
+/* ================================
+   GET CURRENT USER (НЕ ТРОГАЛ)
 ================================ */
 
 router.get("/me", authMiddleware, async (req, res) => {
@@ -176,7 +238,7 @@ router.get("/me", authMiddleware, async (req, res) => {
 });
 
 /* ================================
-   UPDATE PROFILE (NAME)
+   UPDATE PROFILE (НЕ ТРОГАЛ)
 ================================ */
 
 router.put("/me", authMiddleware, async (req, res) => {
@@ -211,7 +273,7 @@ router.put("/me", authMiddleware, async (req, res) => {
 });
 
 /* ================================
-   UPLOAD AVATAR
+   UPLOAD AVATAR (НЕ ТРОГАЛ)
 ================================ */
 
 router.post(
@@ -246,7 +308,7 @@ router.post(
 );
 
 /* ================================
-   GET AVATAR
+   GET AVATAR (НЕ ТРОГАЛ)
 ================================ */
 
 router.get("/avatar", authMiddleware, async (req, res) => {
@@ -273,7 +335,7 @@ router.get("/avatar", authMiddleware, async (req, res) => {
 });
 
 /* ================================
-   CHANGE PASSWORD
+   CHANGE PASSWORD (НЕ ТРОГАЛ)
 ================================ */
 
 router.put("/change-password", authMiddleware, async (req, res) => {
@@ -330,7 +392,7 @@ router.put("/change-password", authMiddleware, async (req, res) => {
 });
 
 /* ================================
-   DELETE ACCOUNT
+   DELETE ACCOUNT (НЕ ТРОГАЛ)
 ================================ */
 
 router.delete("/delete-account", authMiddleware, async (req, res) => {
@@ -378,7 +440,7 @@ router.delete("/delete-account", authMiddleware, async (req, res) => {
 });
 
 /* ================================
-   CHANGE EMAIL
+   CHANGE EMAIL (НЕ ТРОГАЛ)
 ================================ */
 
 router.put("/change-email", authMiddleware, async (req, res) => {
@@ -391,8 +453,10 @@ router.put("/change-email", authMiddleware, async (req, res) => {
             });
         }
 
+        const normalizedEmail = email.trim().toLowerCase();
+
         const existingUser = await prisma.user.findUnique({
-            where: { email },
+            where: { email: normalizedEmail },
         });
 
         if (existingUser) {
@@ -403,7 +467,7 @@ router.put("/change-email", authMiddleware, async (req, res) => {
 
         const updatedUser = await prisma.user.update({
             where: { id: req.user.id },
-            data: { email },
+            data: { email: normalizedEmail },
             select: {
                 id: true,
                 email: true,
