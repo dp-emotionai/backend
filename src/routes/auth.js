@@ -120,10 +120,8 @@ router.post("/login", async (req, res) => {
             });
         }
 
-        const normalizedEmail = email.trim().toLowerCase();
-
         const user = await prisma.user.findUnique({
-            where: { email: normalizedEmail },
+            where: { email: email.trim().toLowerCase() },
         });
 
         if (!user) {
@@ -143,21 +141,28 @@ router.post("/login", async (req, res) => {
             });
         }
 
-        // 🔥 NEW TOKEN SYSTEM
         const accessToken = generateAccessToken(user.id);
         const refreshToken = generateRefreshToken(user.id);
 
-        res.json({
-            accessToken,
-            refreshToken,
-            user: {
-                id: user.id,
-                email: user.email,
-                name: user.name,
-                role: user.role,
-                createdAt: user.createdAt,
-            },
-        });
+        // 🔥 Сохраняем refresh в httpOnly cookie
+        res
+            .cookie("refreshToken", refreshToken, {
+                httpOnly: true,
+                secure: true,        // true в production
+                sameSite: "strict",
+                maxAge: 7 * 24 * 60 * 60 * 1000,
+            })
+            .json({
+                accessToken,
+                user: {
+                    id: user.id,
+                    email: user.email,
+                    name: user.name,
+                    role: user.role,
+                    createdAt: user.createdAt,
+                },
+            });
+
     } catch (error) {
         console.error("LOGIN ERROR:", error);
         res.status(500).json({
@@ -165,18 +170,17 @@ router.post("/login", async (req, res) => {
         });
     }
 });
-
 /* ================================
    REFRESH TOKEN (ADDED)
 ================================ */
 
 router.post("/refresh", async (req, res) => {
     try {
-        const { refreshToken } = req.body;
+        const refreshToken = req.cookies.refreshToken;
 
         if (!refreshToken) {
             return res.status(401).json({
-                message: "No refresh token provided",
+                message: "No refresh token",
             });
         }
 
@@ -190,6 +194,7 @@ router.post("/refresh", async (req, res) => {
         res.json({
             accessToken: newAccessToken,
         });
+
     } catch (error) {
         return res.status(401).json({
             message: "Invalid refresh token",
@@ -201,7 +206,13 @@ router.post("/refresh", async (req, res) => {
    LOGOUT (ADDED)
 ================================ */
 
-router.post("/logout", authMiddleware, async (req, res) => {
+router.post("/logout", (req, res) => {
+    res.clearCookie("refreshToken", {
+        httpOnly: true,
+        secure: true,
+        sameSite: "strict",
+    });
+
     res.json({ message: "Logged out successfully" });
 });
 

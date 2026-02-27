@@ -3,6 +3,7 @@ import http from "http";
 import cors from "cors";
 import "dotenv/config";
 import { Server } from "socket.io";
+import cookieParser from "cookie-parser";
 
 import authRoutes from "./routes/auth.js";
 import userRoutes from "./routes/users.js";
@@ -13,12 +14,18 @@ import roomRoutes from "./routes/rooms.js";
 import sessionRoutes from "./routes/sessions.js";
 import analyticsRoutes from "./routes/analytics.js";
 
-
 const app = express();
 const server = http.createServer(app);
 
-app.use(cors());
+app.use(
+    cors({
+        origin: true,
+        credentials: true,
+    })
+);
+
 app.use(express.json());
+app.use(cookieParser());
 app.use("/uploads", express.static("uploads"));
 
 app.use("/api/auth", authRoutes);
@@ -31,7 +38,9 @@ app.use("/api/documents", documentRoutes);
 app.use("/api/notes", noteRoutes);
 
 const io = new Server(server, {
-    cors: { origin: "*" }
+    cors: {
+        origin: "*",
+    },
 });
 
 io.on("connection", (socket) => {
