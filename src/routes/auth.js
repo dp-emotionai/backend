@@ -24,21 +24,22 @@ router.post("/register", async (req, res) => {
                 email,
                 password: hashedPassword,
                 name: name || null,
-                role: role || "USER", // "USER" или "ADMIN" из enum Role
+                role: role || "USER",
             },
         });
 
-        res.json({
+        // ВАЖНО: статус 201
+        return res.status(201).json({
             message: "User created",
             user: {
                 id: user.id,
                 email: user.email,
                 name: user.name,
-                role: user.role
-            }
+                role: user.role,
+            },
         });
     } catch (error) {
-        res.status(500).json({ error: "Something went wrong" });
+        return res.status(500).json({ error: "Something went wrong" });
     }
 });
 
