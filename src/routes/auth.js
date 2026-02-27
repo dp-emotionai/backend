@@ -2,6 +2,7 @@ import express from "express";
 import bcrypt from "bcrypt";
 import jwt from "jsonwebtoken";
 import prisma from "../utils/prisma.js";
+import authMiddleware from "../middleware/authMiddleware.js";
 
 const router = express.Router();
 
@@ -87,11 +88,11 @@ router.get("/me", authMiddleware, async (req, res) => {
             where: { id: req.user.id },
             select: {
                 id: true,
-                name: true,
                 email: true,
+                name: true,
                 role: true,
-                createdAt: true
-            }
+                createdAt: true,
+            },
         });
 
         if (!user) {
@@ -100,6 +101,7 @@ router.get("/me", authMiddleware, async (req, res) => {
 
         res.json(user);
     } catch (error) {
+        console.error("ME error:", error);
         res.status(500).json({ message: "Server error" });
     }
 });
