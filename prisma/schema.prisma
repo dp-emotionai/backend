@@ -14,11 +14,13 @@ enum Role {
 }
 
 model User {
-  id        Int        @id @default(autoincrement())
-  email     String     @unique
+  id        Int      @id @default(autoincrement())
+  email     String   @unique
   password  String
-  name      String?    // можно сделать обязательным: String
-  role      Role       @default(STUDENT)
+  name      String   // 👈 делаем обязательным
+  role      Role     @default(STUDENT)
+
+  avatar    Bytes?   // 👈 аватар в базе
 
   notes         Note[]
   documents     Document[]
@@ -27,7 +29,7 @@ model User {
   sessions      Session[]
   analytics     Analytics[]
 
-  createdAt DateTime   @default(now())
+  createdAt DateTime @default(now())
 }
 
 model Note {
