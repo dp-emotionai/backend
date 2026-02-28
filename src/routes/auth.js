@@ -1,15 +1,15 @@
 import express from "express";
 import bcrypt from "bcrypt";
 import jwt from "jsonwebtoken";
+import fetch from "node-fetch";
 import multer from "multer";
 import prisma from "../utils/prisma.js";
 import authMiddleware from "../middleware/authMiddleware.js";
 
-const router = express.Router();
+/** @typedef {{ cookies?: { refreshToken?: string } }} RequestWithCookies */
+/** @typedef {{ country_name?: string; city?: string }} IpApiResponse */
 
-/* ================================
-   MULTER CONFIG (avatar in memory)
-================================ */
+const router = express.Router();
 
 const storage = multer.memoryStorage();
 
@@ -19,10 +19,6 @@ const upload = multer({
         fileSize: 2 * 1024 * 1024,
     },
 });
-
-/* ================================
-   TOKEN HELPERS (ADDED)
-================================ */
 
 const generateAccessToken = (userId) => {
     return jwt.sign(
@@ -40,9 +36,70 @@ const generateRefreshToken = (userId) => {
     );
 };
 
-/* ================================
-   REGISTER (НЕ ТРОГАЛ)
-================================ */
+const ipLocationCache = new Map();
+
+const formatDate = (date) => {
+    const d = new Date(date);
+    const day = String(d.getDate()).padStart(2, "0");
+    const month = String(d.getMonth() + 1).padStart(2, "0");
+    const year = d.getFullYear();
+    return `${day}.${month}.${year}`;
+};
+
+const cleanupExpiredTokens = async () => {
+    await prisma.refreshToken.deleteMany({
+        where: {
+            expiresAt: { lt: new Date() },
+        },
+    });
+};
+
+const enforceMaxDevices = async (userId, limit = 3) => {
+    const tokensToRemove = await prisma.refreshToken.findMany({
+        where: { userId },
+        orderBy: { lastUsedAt: "desc" },
+        skip: limit,
+        select: { id: true },
+    });
+
+    if (tokensToRemove.length > 0) {
+        await prisma.refreshToken.deleteMany({
+            where: { id: { in: tokensToRemove.map((t) => t.id) } },
+        });
+    }
+};
+
+const getLocationFromIP = async (req) => {
+    const ip =
+        req.headers["x-forwarded-for"]?.split(",")[0] ||
+        req.ip;
+
+    if (!ip) {
+        return "Unknown";
+    }
+
+    const cached = ipLocationCache.get(ip);
+    if (cached && cached.expiresAt > Date.now()) {
+        return cached.location;
+    }
+
+    try {
+        const geo = await fetch(`https://ipapi.co/${ip}/json/`);
+        /** @type {IpApiResponse} */
+        const geoData = await geo.json();
+
+        const location = `${geoData?.country_name ?? "Unknown"}, ${geoData?.city ?? ""}`;
+
+        ipLocationCache.set(ip, {
+            location,
+            expiresAt: Date.now() + 24 * 60 * 60 * 1000,
+        });
+
+        return location;
+    } catch {
+        return "Unknown";
+    }
+};
 
 router.post("/register", async (req, res) => {
     try {
@@ -106,81 +163,116 @@ router.post("/register", async (req, res) => {
     }
 });
 
-/* ================================
-   LOGIN (UPDATED WITH REFRESH)
-================================ */
-
 router.post("/login", async (req, res) => {
     try {
         const { email, password } = req.body;
 
-        if (!email || !password) {
+        if (!email || !password)
             return res.status(400).json({
                 message: "Email and password required",
             });
-        }
 
         const user = await prisma.user.findUnique({
             where: { email: email.trim().toLowerCase() },
         });
 
-        if (!user) {
+        if (!user)
             return res.status(400).json({
                 message: "User not found",
             });
-        }
 
         const validPassword = await bcrypt.compare(
             password,
             user.password
         );
 
-        if (!validPassword) {
+        if (!validPassword)
             return res.status(400).json({
                 message: "Wrong password",
             });
-        }
 
         const accessToken = generateAccessToken(user.id);
         const refreshToken = generateRefreshToken(user.id);
 
-        // 🔥 Сохраняем refresh в httpOnly cookie
-        res
-            .cookie("refreshToken", refreshToken, {
-                httpOnly: true,
-                secure: true,        // true в production
-                sameSite: "strict",
-                maxAge: 7 * 24 * 60 * 60 * 1000,
-            })
-            .json({
-                accessToken,
-                user: {
-                    id: user.id,
-                    email: user.email,
-                    name: user.name,
-                    role: user.role,
-                    createdAt: user.createdAt,
-                },
-            });
+        const device = req.headers["user-agent"] ?? "unknown";
+        const location = await getLocationFromIP(req);
 
-    } catch (error) {
-        console.error("LOGIN ERROR:", error);
-        res.status(500).json({
-            message: "Server error",
+        const existingSession = await prisma.refreshToken.findFirst({
+            where: {
+                userId: user.id,
+                device,
+                location,
+            },
         });
+
+        const isNewDevice = !existingSession;
+
+        await prisma.refreshToken.create({
+            data: {
+                token: refreshToken,
+                userId: user.id,
+                device,
+                location,
+                userAgent: device,
+                lastUsedAt: new Date(),
+                expiresAt: new Date(
+                    Date.now() + 7 * 24 * 60 * 60 * 1000
+                ),
+            },
+        });
+
+        await enforceMaxDevices(user.id);
+        await cleanupExpiredTokens();
+
+        res.cookie("refreshToken", refreshToken, {
+            httpOnly: true,
+            secure: true,
+            sameSite: "strict",
+            maxAge: 7 * 24 * 60 * 60 * 1000,
+        });
+
+        res.json({
+            accessToken,
+            user: {
+                id: user.id,
+                email: user.email,
+                name: user.name,
+                role: user.role,
+                createdAt: user.createdAt,
+            },
+            device,
+            location,
+            isNewDevice,
+        });
+    } catch {
+        res.status(500).json({ message: "Server error" });
     }
 });
-/* ================================
-   REFRESH TOKEN (ADDED)
-================================ */
-
+/** @param {import("express").Request & RequestWithCookies} req */
 router.post("/refresh", async (req, res) => {
     try {
-        const refreshToken = req.cookies.refreshToken;
+        const refreshToken = req.cookies?.refreshToken;
 
-        if (!refreshToken) {
+        if (!refreshToken)
             return res.status(401).json({
                 message: "No refresh token",
+            });
+
+        const storedToken = await prisma.refreshToken.findUnique({
+            where: { token: refreshToken },
+        });
+
+        if (!storedToken)
+            return res.status(401).json({
+                message: "Invalid refresh token",
+            });
+
+        if (storedToken.expiresAt < new Date()) {
+            await prisma.refreshToken.delete({
+                where: { token: refreshToken },
+            });
+            return res.status(401).json({
+                message: "Refresh token expired",
             });
         }
 
@@ -189,36 +281,68 @@ router.post("/refresh", async (req, res) => {
             process.env.JWT_REFRESH_SECRET
         );
 
+        await prisma.refreshToken.delete({
+            where: { token: refreshToken },
+        });
+
+        const newRefreshToken = generateRefreshToken(decoded.id);
         const newAccessToken = generateAccessToken(decoded.id);
+        const device = req.headers["user-agent"] ?? "unknown";
+        const location = await getLocationFromIP(req);
 
-        res.json({
-            accessToken: newAccessToken,
+        await prisma.refreshToken.create({
+            data: {
+                token: newRefreshToken,
+                userId: decoded.id,
+                device,
+                location,
+                userAgent: device,
+                lastUsedAt: new Date(),
+                expiresAt: new Date(
+                    Date.now() + 7 * 24 * 60 * 60 * 1000
+                ),
+            },
         });
 
-    } catch (error) {
-        return res.status(401).json({
-            message: "Invalid refresh token",
+        await enforceMaxDevices(decoded.id);
+        await cleanupExpiredTokens();
+
+        res.cookie("refreshToken", newRefreshToken, {
+            httpOnly: true,
+            secure: true,
+            sameSite: "strict",
+            maxAge: 7 * 24 * 60 * 60 * 1000,
         });
+
+        res.json({ accessToken: newAccessToken });
+    } catch {
+        res.status(401).json({ message: "Invalid refresh token" });
     }
 });
 
-/* ================================
-   LOGOUT (ADDED)
-================================ */
 
-router.post("/logout", (req, res) => {
-    res.clearCookie("refreshToken", {
-        httpOnly: true,
-        secure: true,
-        sameSite: "strict",
-    });
+/** @param {import("express").Request & RequestWithCookies} req */
+router.post("/logout", async (req, res) => {
+    try {
+        const refreshToken = req.cookies?.refreshToken;
 
-    res.json({ message: "Logged out successfully" });
+        if (refreshToken) {
+            await prisma.refreshToken.deleteMany({
+                where: { token: refreshToken },
+            });
+        }
+
+        res.clearCookie("refreshToken", {
+            httpOnly: true,
+            secure: true,
+            sameSite: "strict",
+        });
+
+        res.json({ message: "Logged out successfully" });
+    } catch {
+        res.status(500).json({ message: "Logout failed" });
+    }
 });
-
-/* ================================
-   GET CURRENT USER (НЕ ТРОГАЛ)
-================================ */
 
 router.get("/me", authMiddleware, async (req, res) => {
     try {
@@ -247,10 +371,6 @@ router.get("/me", authMiddleware, async (req, res) => {
         });
     }
 });
-
-/* ================================
-   UPDATE PROFILE (НЕ ТРОГАЛ)
-================================ */
 
 router.put("/me", authMiddleware, async (req, res) => {
     try {
@@ -283,10 +403,6 @@ router.put("/me", authMiddleware, async (req, res) => {
     }
 });
 
-/* ================================
-   UPLOAD AVATAR (НЕ ТРОГАЛ)
-================================ */
-
 router.post(
     "/avatar",
     authMiddleware,
@@ -318,10 +434,6 @@ router.post(
     }
 );
 
-/* ================================
-   GET AVATAR (НЕ ТРОГАЛ)
-================================ */
-
 router.get("/avatar", authMiddleware, async (req, res) => {
     try {
         const user = await prisma.user.findUnique({
@@ -344,10 +456,6 @@ router.get("/avatar", authMiddleware, async (req, res) => {
         });
     }
 });
-
-/* ================================
-   CHANGE PASSWORD (НЕ ТРОГАЛ)
-================================ */
 
 router.put("/change-password", authMiddleware, async (req, res) => {
     try {
@@ -402,10 +510,6 @@ router.put("/change-password", authMiddleware, async (req, res) => {
     }
 });
 
-/* ================================
-   DELETE ACCOUNT (НЕ ТРОГАЛ)
-================================ */
-
 router.delete("/delete-account", authMiddleware, async (req, res) => {
     try {
         const { password } = req.body;
@@ -450,10 +554,6 @@ router.delete("/delete-account", authMiddleware, async (req, res) => {
     }
 });
 
-/* ================================
-   CHANGE EMAIL (НЕ ТРОГАЛ)
-================================ */
-
 router.put("/change-email", authMiddleware, async (req, res) => {
     try {
         const { email } = req.body;
@@ -495,5 +595,92 @@ router.put("/change-email", authMiddleware, async (req, res) => {
         });
     }
 });
+router.post("/logout-all", authMiddleware, async (req, res) => {
+    try {
+        await prisma.refreshToken.deleteMany({
+            where: { userId: req.user.id },
+        });
 
+        res.clearCookie("refreshToken", {
+            httpOnly: true,
+            secure: true,
+            sameSite: "strict",
+        });
+
+        res.json({ message: "Logged out from all devices" });
+
+    } catch (error) {
+        res.status(500).json({
+            message: "Failed to logout from all devices",
+        });
+    }
+});
+router.get("/sessions", authMiddleware, async (req, res) => {
+    try {
+        await cleanupExpiredTokens();
+
+        const sessions = await prisma.refreshToken.findMany({
+            where: { userId: req.user.id },
+            select: {
+                id: true,
+                device: true,
+                location: true,
+                createdAt: true,
+                lastUsedAt: true,
+                expiresAt: true,
+            },
+            orderBy: {
+                createdAt: "desc",
+            },
+        });
+
+        const now = Date.now();
+
+        const formatted = sessions.map((session) => {
+            const lastUsedTime = new Date(session.lastUsedAt).getTime();
+            const isOnline =
+                lastUsedTime > now - 5 * 60 * 1000;
+
+            return {
+                ...session,
+                createdAtFormatted: formatDate(session.createdAt),
+                lastUsedAtFormatted: formatDate(session.lastUsedAt),
+                expiresAtFormatted: formatDate(session.expiresAt),
+                isOnline,
+            };
+        });
+
+        res.json({ sessions: formatted });
+
+    } catch (error) {
+        res.status(500).json({
+            message: "Failed to fetch sessions",
+        });
+    }
+});
+router.delete("/sessions/:id", authMiddleware, async (req, res) => {
+    try {
+        const sessionId = parseInt(req.params.id);
+
+        const result = await prisma.refreshToken.deleteMany({
+            where: {
+                id: sessionId,
+                userId: req.user.id,
+            },
+        });
+
+        if (result.count === 0) {
+            return res.status(404).json({
+                message: "Session not found",
+            });
+        }
+
+        res.json({ message: "Session terminated" });
+
+    } catch (error) {
+        res.status(500).json({
+            message: "Failed to terminate session",
+        });
+    }
+});
 export default router;

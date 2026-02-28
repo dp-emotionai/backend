@@ -16,6 +16,7 @@ import analyticsRoutes from "./routes/analytics.js";
 
 const app = express();
 const server = http.createServer(app);
+app.set("trust proxy", 1);
 
 app.use(
     cors({
@@ -23,7 +24,6 @@ app.use(
         credentials: true,
     })
 );
-
 app.use(express.json());
 app.use(cookieParser());
 app.use("/uploads", express.static("uploads"));
