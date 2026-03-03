@@ -51,22 +51,31 @@ model RefreshToken {
 }
 
 model Note {
-  id        Int      @id @default(autoincrement())
-  title     String
-  content   String
-  pinned    Boolean  @default(false)
-  userId    Int
-  user      User     @relation(fields: [userId], references: [id])
-  createdAt DateTime @default(now())
+  id          Int        @id @default(autoincrement())
+  title       String
+  content     String
+  pinned      Boolean    @default(false)
+  order     Int      @default(0)
+  userId      Int
+  user        User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  attachments Document[]
+  createdAt   DateTime   @default(now())
+  @@index([userId])
 }
 
 model Document {
   id        Int      @id @default(autoincrement())
   filename  String
   url       String
+  type      String?
+  size      Int?
   userId    Int
-  user      User     @relation(fields: [userId], references: [id])
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  noteId    Int?
+  note      Note?    @relation(fields: [noteId], references: [id], onDelete: Cascade)
   createdAt DateTime @default(now())
+  @@index([userId])
+  @@index([noteId])
 }
 model Group {
   id          Int       @id @default(autoincrement())
