@@ -56,6 +56,8 @@ model Note {
   content     String
   pinned      Boolean    @default(false)
   order     Int      @default(0)
+  blocks      Json?
+
   userId      Int
   user        User       @relation(fields: [userId], references: [id], onDelete: Cascade)
   attachments Document[]

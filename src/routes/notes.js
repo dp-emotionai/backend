@@ -132,7 +132,7 @@ router.get("/:id", authMiddleware, async (req, res) => {
 
 router.put("/:id", authMiddleware, async (req, res) => {
     try {
-        const { title, content, pinned } = req.body;
+        const { title, content, pinned, blocks } = req.body;
         const noteId = parseInt(req.params.id);
 
         const existingNote = await prisma.note.findFirst({
@@ -172,6 +172,7 @@ router.put("/:id", authMiddleware, async (req, res) => {
                 ...(title !== undefined && { title }),
                 ...(content !== undefined && { content }),
                 ...(pinned !== undefined && { pinned }),
+                ...(blocks !== undefined && { blocks }),
                 order: newOrder,
             },
         });
@@ -232,7 +233,7 @@ router.delete("/:id/drawing", authMiddleware, async (req, res) => {
         const updated = await prisma.note.update({
             where: { id: noteId },
             data: {
-                content: "" // удаляем рисунок
+                content: ""
             }
         });
 
