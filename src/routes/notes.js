@@ -212,5 +212,38 @@ router.delete("/:id", authMiddleware, async (req, res) => {
         });
     }
 });
+router.delete("/:id/drawing", authMiddleware, async (req, res) => {
+    try {
+        const noteId = parseInt(req.params.id);
+
+        const note = await prisma.note.findFirst({
+            where: {
+                id: noteId,
+                userId: req.user.id,
+            },
+        });
+
+        if (!note) {
+            return res.status(404).json({
+                message: "Note not found",
+            });
+        }
+
+        const updated = await prisma.note.update({
+            where: { id: noteId },
+            data: {
+                content: "" // удаляем рисунок
+            }
+        });
+
+        res.json(updated);
+
+    } catch (error) {
+        console.error("DELETE DRAWING ERROR:", error);
+        res.status(500).json({
+            error: "Failed to delete drawing",
+        });
+    }
+});
 
 export default router;
