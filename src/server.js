@@ -8,6 +8,7 @@ import cookieParser from "cookie-parser";
 import authRoutes from "./routes/auth.js";
 import userRoutes from "./routes/users.js";
 import noteRoutes from "./routes/notes.js";
+import noteUploadRoutes from "./routes/noteUpload.js";
 import documentRoutes from "./routes/documents.js";
 import groupRoutes from "./routes/groups.js";
 import roomRoutes from "./routes/rooms.js";
@@ -36,6 +37,7 @@ app.use("/api/rooms", roomRoutes);
 app.use("/api/groups", groupRoutes);
 app.use("/api/documents", documentRoutes);
 app.use("/api/notes", noteRoutes);
+app.use("/notes/upload", noteUploadRoutes);
 
 const io = new Server(server, {
     cors: {

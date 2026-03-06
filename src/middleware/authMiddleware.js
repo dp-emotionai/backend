@@ -22,7 +22,6 @@ export default async function authMiddleware(req, res, next) {
                 process.env.JWT_SECRET
             );
         } catch (err) {
-            // Если токен истёк — даём понять клиенту
             if (err.name === "TokenExpiredError") {
                 return res.status(401).json({
                     message: "Token expired",
@@ -55,7 +54,6 @@ export default async function authMiddleware(req, res, next) {
             });
         }
 
-        // Безопасный объект пользователя
         req.user = {
             id: user.id,
             email: user.email,
