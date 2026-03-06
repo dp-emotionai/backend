@@ -17,6 +17,8 @@ const upload = multer({
 router.post("/", authMiddleware, upload.single("file"), async (req, res) => {
     try {
 
+        const { noteId } = req.body;
+
         if (!req.file) {
             return res.status(400).json({
                 message: "No file uploaded"
@@ -35,12 +37,18 @@ router.post("/", authMiddleware, upload.single("file"), async (req, res) => {
             }
         );
 
-        res.json({
-            url: result.secure_url,
-            name: file.originalname,
-            type: file.mimetype,
-            size: file.size
+        const document = await prisma.document.create({
+            data: {
+                filename: file.originalname,
+                url: result.secure_url,
+                type: file.mimetype,
+                size: file.size,
+                userId: req.user.id,
+                noteId: noteId ? parseInt(noteId) : null
+            }
         });
+
+        res.json(document);
 
     } catch (error) {
 
