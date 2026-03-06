@@ -2,6 +2,7 @@ import express from "express";
 import multer from "multer";
 import cloudinary from "../utils/cloudinary.js";
 import authMiddleware from "../middleware/authMiddleware.js";
+import prisma from "../utils/prisma.js";
 
 const router = express.Router();
 
@@ -23,6 +24,23 @@ router.post("/", authMiddleware, upload.single("file"), async (req, res) => {
             return res.status(400).json({
                 message: "No file uploaded"
             });
+        }
+
+        if (noteId) {
+
+            const note = await prisma.note.findFirst({
+                where: {
+                    id: parseInt(noteId),
+                    userId: req.user.id
+                }
+            });
+
+            if (!note) {
+                return res.status(404).json({
+                    message: "Note not found"
+                });
+            }
+
         }
 
         const file = req.file;
