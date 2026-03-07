@@ -30,7 +30,7 @@ router.post("/", authMiddleware, upload.single("file"), async (req, res) => {
 
             const note = await prisma.note.findFirst({
                 where: {
-                    id: parseInt(noteId),
+                    id: String(noteId),
                     userId: req.user.id
                 }
             });

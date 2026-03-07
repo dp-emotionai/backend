@@ -7,7 +7,7 @@ const router = express.Router();
 // получить пользователя по id
 router.get("/:id", authMiddleware, async (req, res) => {
     const user = await prisma.user.findUnique({
-        where: { id: parseInt(req.params.id) },
+        where: { id: req.params.id },
         select: {
             id: true,
             email: true,

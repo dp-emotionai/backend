@@ -14,30 +14,42 @@ enum Role {
 }
 
 model User {
-  id        Int      @id @default(autoincrement())
+  id        String   @id @default(uuid())
   email     String   @unique
   password  String
-  name      String
-  role      Role     @default(STUDENT)
+  role      Role
+  name      String?
+  status    String   @default("active")
 
   avatar    Bytes?
 
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  refreshTokens RefreshToken[]
   notes         Note[]
   documents     Document[]
-  refreshTokens RefreshToken[]
-  groupMembers  GroupMember[]
-  sessions      Session[]
   analytics     Analytics[]
 
-  createdAt DateTime @default(now())
+  groupsAsTeacher     Group[]
+  groupMemberships    GroupMember[]
+  invitationsReceived Invitation[] @relation("InvitationInvitee")
+
+  sessionsAsTeacher Session[]
+  consentRecords    ConsentRecord[]
+
+  groupMessages    GroupMessage[]   @relation("GroupMessageSender")
+  sessionMessages  SessionMessage[] @relation("SessionMessageSender")
+  messageReads     MessageRead[]
+  chatMutesCreated ChatMute[] @relation("ChatMuteCreator")
 }
 
 model RefreshToken {
-  id        Int      @id @default(autoincrement())
+  id        String   @id @default(uuid())
   token     String   @unique
 
-  userId    Int
-  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId    String
+  user      User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   device    String?
   location  String?
@@ -51,74 +63,261 @@ model RefreshToken {
 }
 
 model Note {
-  id          Int        @id @default(autoincrement())
-  title       String
-  content     String
-  pinned      Boolean    @default(false)
+  id        String   @id @default(uuid())
+  title     String
+  content   String
+  pinned    Boolean  @default(false)
   order     Int      @default(0)
-  blocks      Json?
+  blocks    Json?
 
-  userId      Int
-  user        User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId    String
+  user      User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
   attachments Document[]
-  createdAt   DateTime   @default(now())
+
+  createdAt DateTime @default(now())
+
   @@index([userId])
 }
 
 model Document {
-  id        Int      @id @default(autoincrement())
+  id        String   @id @default(uuid())
   filename  String
   url       String
   type      String?
   size      Int?
-  userId    Int
-  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  noteId    Int?
-  note      Note?    @relation(fields: [noteId], references: [id], onDelete: Cascade)
+
+  userId    String
+  user      User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  noteId    String?
+  note      Note? @relation(fields: [noteId], references: [id])
+
   createdAt DateTime @default(now())
+
   @@index([userId])
-  @@index([noteId])
 }
+
 model Group {
-  id          Int       @id @default(autoincrement())
-  name        String
-  description String?
+  id        String   @id @default(uuid())
+  name      String
+  teacherId String
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  teacher     User @relation(fields: [teacherId], references: [id], onDelete: Cascade)
+
+  sessions    Session[]
   members     GroupMember[]
-  rooms       Room[]
-  createdAt   DateTime  @default(now())
+  invitations Invitation[]
+
+  messages       GroupMessage[]
+  chatSettings   GroupChatSettings?
+
+  @@index([teacherId])
 }
 
 model GroupMember {
-  id       Int   @id @default(autoincrement())
-  user     User  @relation(fields: [userId], references: [id])
-  userId   Int
-  group    Group @relation(fields: [groupId], references: [id])
-  groupId  Int
+  id        String   @id @default(uuid())
+  groupId   String
+  userId    String
+
+  role      String   @default("student")
+  status    String   @default("active")
+
+  addedAt   DateTime @default(now())
+  removedAt DateTime?
+
+  group Group @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  user  User  @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([groupId, userId])
 }
 
-model Room {
-  id        Int      @id @default(autoincrement())
-  title     String
-  active    Boolean  @default(true)
-  group     Group?   @relation(fields: [groupId], references: [id])
-  groupId   Int?
+model Invitation {
+  id            String   @id @default(uuid())
+  groupId       String
+  inviteeEmail  String
+  inviteeUserId String?
+
+  status String @default("pending")
+  token  String?
+
   createdAt DateTime @default(now())
+
+  group Group @relation(fields: [groupId], references: [id], onDelete: Cascade)
+
+  user  User? @relation("InvitationInvitee", fields: [inviteeUserId], references: [id])
+
+  @@unique([groupId, inviteeEmail])
+  @@index([groupId])
+  @@index([inviteeEmail])
 }
 
 model Session {
-  id          Int       @id @default(autoincrement())
-  user        User      @relation(fields: [userId], references: [id])
-  userId      Int
-  duration    Int
-  engagement  Float
-  createdAt   DateTime  @default(now())
+  id          String   @id @default(uuid())
+  title       String
+  type        String
+  status      String   @default("draft")
+  code        String   @unique
+
+  groupId     String
+  createdById String
+
+  startedAt   DateTime?
+  endedAt     DateTime?
+
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  group   Group @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  teacher User  @relation(fields: [createdById], references: [id], onDelete: Cascade)
+
+  consents ConsentRecord[]
+
+  messages   SessionMessage[]
+  chatPolicy SessionChatPolicy?
+
+  @@index([groupId])
+}
+
+model ConsentRecord {
+  id        String   @id @default(uuid())
+
+  userId    String
+  sessionId String
+
+  consentedAt DateTime @default(now())
+
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  session Session @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, sessionId])
+}
+
+model AuditLog {
+  id         String   @id @default(uuid())
+  actorId    String
+  action     String
+  entityType String
+  entityId   String?
+  meta       String?
+  createdAt  DateTime @default(now())
+
+  @@index([actorId])
+  @@index([entityType])
+  @@index([createdAt])
 }
 
 model Analytics {
-  id          Int       @id @default(autoincrement())
-  user        User      @relation(fields: [userId], references: [id])
-  userId      Int
-  score       Float
-  emotion     String?
-  createdAt   DateTime  @default(now())
+  id        String   @id @default(uuid())
+
+  userId    String
+  user      User @relation(fields: [userId], references: [id])
+
+  score     Float
+  emotion   String?
+
+  createdAt DateTime @default(now())
+}
+
+model GroupMessage {
+  id        String   @id @default(uuid())
+
+  groupId   String
+  senderId  String
+
+  type      String
+  text      String
+
+  replyToId String?
+  qaStatus  String?
+
+  pinnedAt  DateTime?
+
+  createdAt DateTime @default(now())
+  editedAt  DateTime?
+  deletedAt DateTime?
+
+  group  Group @relation(fields: [groupId], references: [id], onDelete: Cascade)
+
+  sender User  @relation("GroupMessageSender", fields: [senderId], references: [id])
+
+  reads MessageRead[]
+
+  @@index([groupId, createdAt, id])
+}
+
+model SessionMessage {
+  id        String   @id @default(uuid())
+
+  sessionId String
+  senderId  String
+
+  type      String
+  text      String
+
+  channel   String @default("public")
+
+  createdAt DateTime @default(now())
+
+  session Session @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  sender  User @relation("SessionMessageSender", fields: [senderId], references: [id])
+}
+
+model MessageRead {
+  id             String   @id @default(uuid())
+
+  groupMessageId String
+  userId         String
+
+  readAt DateTime @default(now())
+
+  announcement GroupMessage @relation(fields: [groupMessageId], references: [id], onDelete: Cascade)
+  user         User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([groupMessageId, userId])
+  @@index([groupMessageId])
+  @@index([userId])
+}
+
+model ChatMute {
+  id           String   @id @default(uuid())
+
+  scope        String
+  scopeId      String
+
+  targetUserId String
+
+  mutedUntil   DateTime
+
+  createdById  String
+
+  createdAt    DateTime @default(now())
+
+  creator User @relation("ChatMuteCreator", fields: [createdById], references: [id])
+}
+
+model GroupChatSettings {
+  groupId String  @id
+
+  chatEnabled Boolean @default(true)
+
+  slowmodeSec Int @default(0)
+
+  group Group @relation(fields: [groupId], references: [id])
+}
+
+model SessionChatPolicy {
+  sessionId String @id
+
+  mode String @default("lecture_open")
+
+  slowmodeSec Int @default(0)
+
+  updatedAt DateTime @updatedAt
+
+  session Session @relation(fields: [sessionId], references: [id])
 }

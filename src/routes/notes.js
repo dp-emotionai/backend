@@ -51,9 +51,17 @@ router.get("/", authMiddleware, async (req, res) => {
                 { order: "asc" },
                 { createdAt: "desc" },
             ],
-            include: {
-                attachments: true,
+            select: {
+                id: true,
+                title: true,
+                content: true,
+                pinned: true,
+                order: true,
+                blocks: true,
+                createdAt: true,
+                attachments: { select: { id: true, filename: true, url: true, type: true, size: true } },
             },
+            take: 500,
         });
 
         res.json(notes);
@@ -102,15 +110,22 @@ router.put("/reorder", authMiddleware, async (req, res) => {
 
 router.get("/:id", authMiddleware, async (req, res) => {
     try {
-        const noteId = parseInt(req.params.id);
+        const noteId = req.params.id;
 
         const note = await prisma.note.findFirst({
             where: {
                 id: noteId,
                 userId: req.user.id,
             },
-            include: {
-                attachments: true,
+            select: {
+                id: true,
+                title: true,
+                content: true,
+                pinned: true,
+                order: true,
+                blocks: true,
+                createdAt: true,
+                attachments: { select: { id: true, filename: true, url: true, type: true, size: true } },
             },
         });
 
@@ -133,7 +148,7 @@ router.get("/:id", authMiddleware, async (req, res) => {
 router.put("/:id", authMiddleware, async (req, res) => {
     try {
         const { title, content, pinned, blocks } = req.body;
-        const noteId = parseInt(req.params.id);
+        const noteId = req.params.id;
 
         const existingNote = await prisma.note.findFirst({
             where: {
@@ -189,7 +204,7 @@ router.put("/:id", authMiddleware, async (req, res) => {
 
 router.delete("/:id", authMiddleware, async (req, res) => {
     try {
-        const noteId = parseInt(req.params.id);
+        const noteId = req.params.id;
 
         const deleted = await prisma.note.deleteMany({
             where: {
@@ -215,7 +230,7 @@ router.delete("/:id", authMiddleware, async (req, res) => {
 });
 router.delete("/:id/drawing", authMiddleware, async (req, res) => {
     try {
-        const noteId = parseInt(req.params.id);
+        const noteId = req.params.id;
 
         const note = await prisma.note.findFirst({
             where: {
@@ -231,7 +246,7 @@ router.delete("/:id/drawing", authMiddleware, async (req, res) => {
         }
 
         const updated = await prisma.note.update({
-            where: { id: noteId },
+            where: { id: note.id },
             data: {
                 content: ""
             }

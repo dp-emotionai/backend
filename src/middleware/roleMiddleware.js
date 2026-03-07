@@ -1,13 +1,15 @@
-export default function roleMiddleware(allowedRoles = []) {
-    return (req, res, next) => {
-        if (!req.user) {
-            return res.status(401).json({ message: "Unauthorized" });
-        }
+export default function roleMiddleware(allowedRoles=[]){
 
-        if (!allowedRoles.includes(req.user.role)) {
-            return res.status(403).json({ message: "Access denied" });
-        }
+    return (req,res,next)=>{
 
-        next();
-    };
+        if(!req.user)
+            return res.status(401).json({message:"Unauthorized"})
+
+        if(!allowedRoles.includes(req.user.role))
+            return res.status(403).json({message:"Access denied"})
+
+        next()
+
+    }
+
 }

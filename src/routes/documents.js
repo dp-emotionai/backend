@@ -48,7 +48,7 @@ router.post(
                     type: req.file.mimetype,
                     size: req.file.size,
                     userId: req.user.id,
-                    noteId: noteId ? parseInt(noteId) : null,
+                    noteId: noteId && String(noteId).trim() ? String(noteId).trim() : null,
                 },
             });
 
@@ -71,10 +71,11 @@ router.get("/", authMiddleware, async (req, res) => {
             where: {
                 userId: req.user.id,
                 ...(noteId
-                    ? { noteId: parseInt(noteId) }
+                    ? { noteId: String(noteId).trim() }
                     : { noteId: null }),
             },
             orderBy: { createdAt: "desc" },
+            take: 200,
         });
 
         res.json(documents);
@@ -90,7 +91,7 @@ router.get("/", authMiddleware, async (req, res) => {
 
 router.delete("/:id", authMiddleware, async (req, res) => {
     try {
-        const documentId = parseInt(req.params.id);
+        const documentId = req.params.id;
 
         const document = await prisma.document.findFirst({
             where: {
@@ -115,7 +116,7 @@ router.delete("/:id", authMiddleware, async (req, res) => {
         );
 
         await prisma.document.delete({
-            where: { id: documentId },
+            where: { id: document.id },
         });
 
         res.json({ message: "Deleted" });
