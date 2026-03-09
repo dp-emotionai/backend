@@ -10,7 +10,7 @@ export async function sendMail({ to, subject, text, html }) {
         return
     }
 
-    const fromEmail = process.env.RESEND_FROM_EMAIL || "konilai<onboarding@resend.dev>"
+    const fromEmail = process.env.RESEND_FROM_EMAIL || "konilAI<konil@konilai.space>"
 
     try {
         const { data, error } = await resend.emails.send({
@@ -28,17 +28,17 @@ export async function sendMail({ to, subject, text, html }) {
 }
 
 export async function sendUserApprovedEmail(user) {
-    const subject = "Ваш аккаунт в konilai одобрен администратором"
+    const subject = "Ваш аккаунт в konilAI одобрен администратором"
 
     const text =
         `Здравствуйте${user.name ? ", " + user.name : ""}!\n\n` +
-        "Ваш аккаунт в системе konilai был одобрен администратором. " +
+        "Ваш аккаунт в системе konilAI был одобрен администратором. " +
         "Теперь вы можете войти, используя свой email и пароль.\n\n" +
-        "С уважением,\nКоманда konilai"
+        "С уважением,\nКоманда konilAI"
 
     const html =
         `<p>Здравствуйте${user.name ? ", " + user.name : ""}!</p>` +
-        `<p>Ваш аккаунт в системе <b>konilai</b> был одобрен администратором.</p>` +
+        `<p>Ваш аккаунт в системе <b>konilAI</b> был одобрен администратором.</p>` +
         `<p>Теперь вы можете войти, используя свой email и пароль.</p>` +
         `<p>С уважением,<br/>Команда ELAS</p>`
 
@@ -67,7 +67,7 @@ export async function sendNewRegistrationAdminEmail(user) {
 
     const status = user.status || "PENDING"
 
-    const subject = `Новая заявка преподавателя в konilai: ${user.email}`
+    const subject = `Новая заявка преподавателя в konilAI: ${user.email}`
 
     const text =
         `Email: ${user.email}\n` +
@@ -80,7 +80,7 @@ export async function sendNewRegistrationAdminEmail(user) {
         `Ссылка для админа: ${adminLink}`
 
     const html =
-        `<p>Новая заявка преподавателя в <b>konilai</b>:</p>` +
+        `<p>Новая заявка преподавателя в <b>konilAI</b>:</p>` +
         `<ul>` +
         `<li><b>Email:</b> ${user.email}</li>` +
         `<li><b>Имя:</b> ${user.name ?? "—"}</li>` +
@@ -101,10 +101,10 @@ export async function sendNewRegistrationAdminEmail(user) {
 }
 
 export async function sendEmailVerificationCode(email, code) {
-    const subject = "Ваш код входа в konilai"
+    const subject = "Ваш код входа в konilAI"
 
     const text =
-        `Ваш код подтверждения для konilai: ${code}\n\n` +
+        `Ваш код подтверждения для konilAI: ${code}\n\n` +
         "Введите этот код в приложении, чтобы подтвердить email и войти."
 
     const html =
