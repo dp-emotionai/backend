@@ -5,7 +5,7 @@ import fetch from "node-fetch"
 import multer from "multer"
 import prisma from "../utils/prisma.js"
 import authMiddleware from "../middleware/authMiddleware.js"
-import { sendNewRegistrationAdminEmail } from "../utils/email.js"
+import { sendNewRegistrationAdminEmail, sendEmailVerificationCode } from "../utils/email.js"
 import { logAudit } from "../utils/audit.js"
 
 const router = express.Router()
@@ -121,6 +121,40 @@ const getTeacherInviteCodes = () => {
     )
 }
 
+const computeRoleAndStatus = (normalizedEmail, role, inviteCode) => {
+    const requestedRole = typeof role === "string" ? role.toLowerCase() : "student"
+    const isTeacher = requestedRole === "teacher"
+
+    const teacherInviteCodes = getTeacherInviteCodes()
+    const trustedDomains = getTrustedDomains()
+
+    const emailDomain = normalizedEmail.split("@")[1] || ""
+
+    let dbRole = isTeacher ? "TEACHER" : "STUDENT"
+    let status = "PENDING"
+
+    if (isTeacher) {
+        if (inviteCode && teacherInviteCodes.has(String(inviteCode).trim())) {
+            status = "APPROVED"
+        } else {
+            status = "PENDING"
+        }
+    } else {
+        if (trustedDomains.includes(emailDomain)) {
+            status = "APPROVED"
+        } else {
+            status = "LIMITED"
+        }
+    }
+
+    return { dbRole, status }
+}
+
+const generateEmailCode = () => {
+    const n = Math.floor(100000 + Math.random() * 900000)
+    return String(n)
+}
+
 router.post("/register",async(req,res)=>{
 
     try{
@@ -135,12 +169,12 @@ router.post("/register",async(req,res)=>{
             inviteCode,
         }=req.body
 
-        if(!email || !password)
+        if(!email)
             return res.status(400).json({
                 error:"Email и пароль обязательны"
             })
 
-        if(password.length<6)
+        if(password && password.length<6)
             return res.status(400).json({
                 error:"Пароль должен быть не менее 6 символов"
             })
@@ -156,76 +190,25 @@ router.post("/register",async(req,res)=>{
                 error:"Пользователь с таким email уже существует"
             })
 
-        const hashedPassword=await bcrypt.hash(password,10)
+        const hashedPassword = password ? await bcrypt.hash(password,10) : null
 
-        const requestedRole = typeof role === "string" ? role.toLowerCase() : "student"
-        const isTeacher = requestedRole === "teacher"
+        // Генерируем код для подтверждения email и сохраняем как заявку на регистрацию
+        const code = generateEmailCode()
+        const expiresAt = new Date(Date.now() + 10 * 60 * 1000)
 
-        const teacherInviteCodes = getTeacherInviteCodes()
-        const trustedDomains = getTrustedDomains()
-
-        const emailDomain = normalizedEmail.split("@")[1] || ""
-
-        let dbRole = isTeacher ? "TEACHER" : "STUDENT"
-        let status = "PENDING"
-
-        if (isTeacher) {
-            if (inviteCode && teacherInviteCodes.has(String(inviteCode).trim())) {
-                status = "APPROVED"
-            } else {
-                status = "PENDING"
-            }
-        } else {
-            if (trustedDomains.includes(emailDomain)) {
-                status = "APPROVED"
-            } else {
-                status = "LIMITED"
-            }
-        }
-
-        const user=await prisma.user.create({
+        await prisma.emailCode.create({
             data:{
-                email:normalizedEmail,
-                password:hashedPassword,
-                name:name ? String(name).trim() : null,
-                role:dbRole,
-                status,
-                organization: organization ? String(organization).trim() : null,
-                profileUrl: profileUrl ? String(profileUrl).trim() : null,
-                inviteCode: inviteCode ? String(inviteCode).trim() : null,
+                email: normalizedEmail,
+                code,
+                purpose: "register",
+                expiresAt,
             }
         })
 
-        // уведомление админу о новой регистрации (best-effort)
-        try{
-            await sendNewRegistrationAdminEmail(user)
-        }catch(e){
-            console.error("EMAIL new registration failed",e)
-        }
-
-        // запись в аудит
-        try{
-            await logAudit(
-                null,
-                "user.registered",
-                "User",
-                user.id,
-                { email:user.email, role:user.role, status:user.status }
-            )
-        }catch(e){
-            console.error("AUDIT new registration failed",e)
-        }
+        await sendEmailVerificationCode(normalizedEmail, code)
 
         res.status(201).json({
-            message:"Registration successful",
-            user:{
-                id:user.id,
-                email:user.email,
-                name:user.name,
-                role:dbRole === "ADMIN" ? "admin" : dbRole === "TEACHER" ? "teacher" : "student",
-                status:user.status,
-                createdAt:user.createdAt
-            }
+            message:"Verification code sent"
         })
 
     }catch(error){
@@ -235,6 +218,179 @@ router.post("/register",async(req,res)=>{
         res.status(500).json({
             error:"Something went wrong"
         })
+
+    }
+
+})
+
+// Запросить 6-значный код по email (для входа / регистрации без пароля)
+router.post("/request-code", async (req, res) => {
+
+    try{
+
+        const {
+            email,
+            role,
+            organization,
+            profileUrl,
+            inviteCode,
+            purpose,
+        } = req.body || {}
+
+        if (!email)
+            return res.status(400).json({ error:"Email и пароль обязательны" })
+
+        const normalizedEmail = String(email).trim().toLowerCase()
+        const now = new Date()
+
+        const code = generateEmailCode()
+        const expiresAt = new Date(now.getTime() + 10 * 60 * 1000) // 10 минут
+
+        await prisma.emailCode.create({
+            data:{
+                email: normalizedEmail,
+                code,
+                purpose: purpose || "login",
+                expiresAt,
+            }
+        })
+
+        await sendEmailVerificationCode(normalizedEmail, code)
+
+        res.json({
+            message:"Verification code sent",
+        })
+
+    }catch(e){
+
+        console.error("REQUEST-CODE ERROR", e)
+        res.status(500).json({ error:"Something went wrong" })
+
+    }
+
+})
+
+// Подтвердить код и войти / создать аккаунт
+router.post("/verify-email", async (req, res) => {
+
+    try{
+
+        const {
+            email,
+            code,
+            role,
+            organization,
+            profileUrl,
+            inviteCode,
+        } = req.body || {}
+
+        if (!email || !code)
+            return res.status(400).json({ error:"Email и пароль обязательны" })
+
+        const normalizedEmail = String(email).trim().toLowerCase()
+        const codeStr = String(code).trim()
+
+        const record = await prisma.emailCode.findFirst({
+            where:{
+                email: normalizedEmail,
+                code: codeStr,
+                consumedAt: null,
+                expiresAt: { gt: new Date() },
+            },
+            orderBy:{ createdAt:"desc" },
+        })
+
+        if (!record)
+            return res.status(401).json({ error:"Неверный email или пароль" })
+
+        const mode = record.purpose || "login"
+
+        let user = await prisma.user.findUnique({
+            where:{ email: normalizedEmail }
+        })
+
+        // Для login требуем существующего пользователя
+        if (mode === "login" && !user)
+            return res.status(401).json({ error:"Неверный email или пароль" })
+
+        // Для регистрации через код не даём перезаписывать уже существующий аккаунт
+        if (mode === "register" && user)
+            return res.status(400).json({ error:"Пользователь с таким email уже существует" })
+
+        await prisma.emailCode.update({
+            where:{ id: record.id },
+            data:{ consumedAt: new Date() },
+        })
+
+        if (!user && mode === "register") {
+            const { dbRole, status } = computeRoleAndStatus(normalizedEmail, role, inviteCode)
+            user = await prisma.user.create({
+                data:{
+                    email: normalizedEmail,
+                    password: "", // пароль не используется при входе по коду
+                    name: null,
+                    role: dbRole,
+                    status,
+                    organization: organization ? String(organization).trim() : null,
+                    profileUrl: profileUrl ? String(profileUrl).trim() : null,
+                    inviteCode: inviteCode ? String(inviteCode).trim() : null,
+                }
+            })
+        }
+
+        if(user.status === "BLOCKED")
+            return res.status(403).json({
+                error:"Account is blocked"
+            })
+        if(user.status === "PENDING")
+            return res.status(403).json({
+                error:"Account is awaiting admin approval"
+            })
+
+        const accessToken=generateAccessToken(user.id,user.role)
+        const refreshToken=generateRefreshToken(user.id)
+
+        const device=req.headers["user-agent"] ?? "unknown"
+        const location=await getLocationFromIP(req)
+
+        await prisma.refreshToken.create({
+            data:{
+                token:refreshToken,
+                userId:user.id,
+                device,
+                location,
+                userAgent:device,
+                lastUsedAt:new Date(),
+                expiresAt:new Date(Date.now()+604800000)
+            }
+        })
+
+        await enforceMaxDevices(user.id)
+        await cleanupExpiredTokens()
+
+        res.cookie("refreshToken",refreshToken,{
+            httpOnly:true,
+            secure:true,
+            sameSite:"none",
+            maxAge:604800000
+        })
+
+        res.json({
+            token:accessToken,
+            user:{
+                id:user.id,
+                email:user.email,
+                name:user.name,
+                role:user.role === "ADMIN" ? "admin" : user.role === "TEACHER" ? "teacher" : "student",
+                status:user.status,
+                createdAt:user.createdAt
+            },
+        })
+
+    }catch(e){
+
+        console.error("VERIFY-CODE ERROR", e)
+        res.status(500).json({ error:"Server error" })
 
     }
 

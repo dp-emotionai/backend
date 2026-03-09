@@ -216,6 +216,18 @@ model AuditLog {
   @@index([createdAt])
 }
 
+model EmailCode {
+  id         String   @id @default(uuid())
+  email      String
+  code       String
+  purpose    String
+  createdAt  DateTime @default(now())
+  expiresAt  DateTime
+  consumedAt DateTime?
+
+  @@index([email])
+}
+
 model Analytics {
   id        String   @id @default(uuid())
 
