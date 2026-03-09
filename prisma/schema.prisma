@@ -17,12 +17,15 @@ enum Role {
 }
 
 model User {
-  id        String   @id @default(uuid())
-  email     String   @unique
-  password  String
-  role      Role
-  name      String?
-  status    String   @default("active")
+  id           String   @id @default(uuid())
+  email        String   @unique
+  password     String
+  role         Role
+  name         String?
+  status       String   @default("APPROVED")
+  organization String?
+  profileUrl   String?
+  inviteCode   String?
 
   avatar    Bytes?
 

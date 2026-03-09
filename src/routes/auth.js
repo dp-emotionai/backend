@@ -17,9 +17,9 @@ const upload = multer({
     limits:{fileSize:2*1024*1024}
 })
 
-const generateAccessToken=(userId)=>{
+const generateAccessToken=(userId,role)=>{
     return jwt.sign(
-        {id:userId},
+        {sub:userId,role},
         process.env.JWT_SECRET,
         {expiresIn:"15m"}
     )
@@ -103,20 +103,46 @@ const getLocationFromIP=async(req)=>{
 
 }
 
+const getTrustedDomains = () => {
+    const raw = process.env.TRUSTED_EMAIL_DOMAINS || ""
+    return raw
+        .split(",")
+        .map((d)=>d.trim().toLowerCase())
+        .filter(Boolean)
+}
+
+const getTeacherInviteCodes = () => {
+    const raw = process.env.TEACHER_INVITE_CODES || ""
+    return new Set(
+        raw
+            .split(",")
+            .map((c)=>c.trim())
+            .filter(Boolean)
+    )
+}
+
 router.post("/register",async(req,res)=>{
 
     try{
 
-        const {email,password,name,role}=req.body
+        const {
+            email,
+            password,
+            name,
+            role,
+            organization,
+            profileUrl,
+            inviteCode,
+        }=req.body
 
-        if(!email || !password || !name)
+        if(!email || !password)
             return res.status(400).json({
-                message:"Email, password and name are required"
+                error:"Email и пароль обязательны"
             })
 
         if(password.length<6)
             return res.status(400).json({
-                message:"Password must be at least 6 characters"
+                error:"Пароль должен быть не менее 6 символов"
             })
 
         const normalizedEmail=email.trim().toLowerCase()
@@ -127,24 +153,46 @@ router.post("/register",async(req,res)=>{
 
         if(existingUser)
             return res.status(400).json({
-                message:"User already exists"
+                error:"Пользователь с таким email уже существует"
             })
 
         const hashedPassword=await bcrypt.hash(password,10)
 
-        const allowedRoles=["STUDENT","TEACHER"]
+        const requestedRole = typeof role === "string" ? role.toLowerCase() : "student"
+        const isTeacher = requestedRole === "teacher"
 
-        const userRole=allowedRoles.includes(role)
-            ? role
-            : "STUDENT"
+        const teacherInviteCodes = getTeacherInviteCodes()
+        const trustedDomains = getTrustedDomains()
+
+        const emailDomain = normalizedEmail.split("@")[1] || ""
+
+        let dbRole = isTeacher ? "TEACHER" : "STUDENT"
+        let status = "PENDING"
+
+        if (isTeacher) {
+            if (inviteCode && teacherInviteCodes.has(String(inviteCode).trim())) {
+                status = "APPROVED"
+            } else {
+                status = "PENDING"
+            }
+        } else {
+            if (trustedDomains.includes(emailDomain)) {
+                status = "APPROVED"
+            } else {
+                status = "LIMITED"
+            }
+        }
 
         const user=await prisma.user.create({
             data:{
                 email:normalizedEmail,
                 password:hashedPassword,
-                name:name.trim(),
-                role:userRole,
-                status:"pending"
+                name:name ? String(name).trim() : null,
+                role:dbRole,
+                status,
+                organization: organization ? String(organization).trim() : null,
+                profileUrl: profileUrl ? String(profileUrl).trim() : null,
+                inviteCode: inviteCode ? String(inviteCode).trim() : null,
             }
         })
 
@@ -169,12 +217,12 @@ router.post("/register",async(req,res)=>{
         }
 
         res.status(201).json({
-            message:"Registration request submitted. Wait for admin approval.",
+            message:"Registration successful",
             user:{
                 id:user.id,
                 email:user.email,
                 name:user.name,
-                role:user.role,
+                role:dbRole === "ADMIN" ? "admin" : dbRole === "TEACHER" ? "teacher" : "student",
                 status:user.status,
                 createdAt:user.createdAt
             }
@@ -185,7 +233,7 @@ router.post("/register",async(req,res)=>{
         console.error("REGISTER ERROR:",error)
 
         res.status(500).json({
-            message:"Something went wrong"
+            error:"Something went wrong"
         })
 
     }
@@ -200,7 +248,7 @@ router.post("/login",async(req,res)=>{
 
         if(!email || !password)
             return res.status(400).json({
-                message:"Email and password required"
+                error:"Email и пароль обязательны"
             })
 
         const user=await prisma.user.findUnique({
@@ -209,15 +257,15 @@ router.post("/login",async(req,res)=>{
 
         if(!user)
             return res.status(401).json({
-                message:"Invalid credentials"
+                error:"Неверный email или пароль"
             })
-        if(user.status === "blocked")
+        if(user.status === "BLOCKED")
             return res.status(403).json({
-                message:"Account is blocked"
+                error:"Account is blocked"
             })
-        if(user.status === "pending")
+        if(user.status === "PENDING")
             return res.status(403).json({
-                message:"Account is awaiting admin approval"
+                error:"Account is awaiting admin approval"
             })
 
         const validPassword=await bcrypt.compare(
@@ -226,11 +274,11 @@ router.post("/login",async(req,res)=>{
         )
 
         if(!validPassword)
-            return res.status(400).json({
-                message:"Wrong password"
+            return res.status(401).json({
+                error:"Неверный email или пароль"
             })
 
-        const accessToken=generateAccessToken(user.id)
+        const accessToken=generateAccessToken(user.id,user.role)
         const refreshToken=generateRefreshToken(user.id)
 
         const device=req.headers["user-agent"] ?? "unknown"
@@ -269,12 +317,12 @@ router.post("/login",async(req,res)=>{
         })
 
         res.json({
-            accessToken,
+            token:accessToken,
             user:{
                 id:user.id,
                 email:user.email,
                 name:user.name,
-                role:user.role,
+                role:user.role === "ADMIN" ? "admin" : user.role === "TEACHER" ? "teacher" : "student",
                 status:user.status,
                 createdAt:user.createdAt
             },
@@ -285,7 +333,7 @@ router.post("/login",async(req,res)=>{
 
     }catch{
 
-        res.status(500).json({message:"Server error"})
+        res.status(500).json({error:"Server error"})
 
     }
 

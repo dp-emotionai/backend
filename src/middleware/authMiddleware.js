@@ -9,7 +9,7 @@ export default async function authMiddleware(req,res,next){
             req.headers.authorization || req.headers.Authorization
 
         if(!authHeader || !authHeader.startsWith("Bearer "))
-            return res.status(401).json({message:"No token provided"})
+            return res.status(401).json({error:"No token provided"})
 
         const token = authHeader.split(" ")[1]
 
@@ -22,17 +22,17 @@ export default async function authMiddleware(req,res,next){
         }catch(err){
 
             if(err.name === "TokenExpiredError")
-                return res.status(401).json({message:"Token expired"})
+                return res.status(401).json({error:"Token expired"})
 
-            return res.status(401).json({message:"Invalid token"})
+            return res.status(401).json({error:"Invalid token"})
 
         }
 
-        if(!decoded?.id)
-            return res.status(401).json({message:"Invalid token payload"})
+        if(!decoded?.sub)
+            return res.status(401).json({error:"Invalid token payload"})
 
         const user = await prisma.user.findUnique({
-            where:{id:decoded.id},
+            where:{id:decoded.sub},
             select:{
                 id:true,
                 email:true,
@@ -43,11 +43,11 @@ export default async function authMiddleware(req,res,next){
         })
 
         if(!user)
-            return res.status(401).json({message:"User not found"})
-        if(user.status === "blocked")
-            return res.status(403).json({message:"Account is blocked"})
-        if(user.status === "pending")
-            return res.status(403).json({message:"Account is awaiting admin approval"})
+            return res.status(401).json({error:"User not found"})
+        if(user.status === "BLOCKED")
+            return res.status(403).json({error:"Account is blocked"})
+        if(user.status === "PENDING")
+            return res.status(403).json({error:"Account is awaiting admin approval"})
 
         req.user = {
             id: user.id,
@@ -64,7 +64,7 @@ export default async function authMiddleware(req,res,next){
 
         console.error("AUTH ERROR",err)
 
-        res.status(401).json({message:"Authentication failed"})
+        res.status(401).json({error:"Authentication failed"})
 
     }
 

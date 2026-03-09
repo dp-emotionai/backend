@@ -20,12 +20,29 @@ router.get("/users", async (req, res) => {
                 name: true,
                 role: true,
                 status: true,
+                organization: true,
                 createdAt: true,
-                updatedAt: true,
             },
             orderBy: { createdAt: "desc" },
         });
-        res.json(users);
+        const order = { PENDING: 0, LIMITED: 1, APPROVED: 2, BLOCKED: 3 }
+        users.sort((a,b)=>{
+            const sa = order[a.status] ?? 99
+            const sb = order[b.status] ?? 99
+            if (sa !== sb) return sa - sb
+            return b.createdAt - a.createdAt
+        })
+        res.json(
+            users.map((u)=>({
+                id: u.id,
+                email: u.email,
+                name: u.name,
+                role: u.role === "ADMIN" ? "admin" : u.role === "TEACHER" ? "teacher" : "student",
+                status: u.status,
+                organization: u.organization,
+                createdAt: u.createdAt,
+            }))
+        );
     } catch (e) {
         console.error("GET /admin/users", e);
         res.status(500).json({ error: "Failed to list users" });
@@ -42,7 +59,7 @@ router.put("/users/:id/approve", async (req, res) => {
         }
         const updated = await prisma.user.update({
             where: { id },
-            data: { status: "active" },
+            data: { status: "APPROVED" },
         });
         try {
             await sendUserApprovedEmail(updated);
@@ -63,6 +80,7 @@ router.put("/users/:id/approve", async (req, res) => {
         res.json({
             id: updated.id,
             email: updated.email,
+            role: updated.role === "ADMIN" ? "admin" : updated.role === "TEACHER" ? "teacher" : "student",
             status: updated.status,
         });
     } catch (e) {
@@ -97,7 +115,7 @@ router.put("/users/:id/block", async (req, res) => {
         }
         const updated = await prisma.user.update({
             where: { id },
-            data: { status: "blocked" },
+            data: { status: "BLOCKED" },
         });
         res.json({
             id: updated.id,
