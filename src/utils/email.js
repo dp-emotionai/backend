@@ -10,7 +10,7 @@ export async function sendMail({ to, subject, text, html }) {
         return
     }
 
-    const fromEmail = process.env.RESEND_FROM_EMAIL || "ELAS <onboarding@resend.dev>"
+    const fromEmail = process.env.RESEND_FROM_EMAIL || "konilai<onboarding@resend.dev>"
 
     try {
         const { data, error } = await resend.emails.send({
@@ -80,7 +80,7 @@ export async function sendNewRegistrationAdminEmail(user) {
         `Ссылка для админа: ${adminLink}`
 
     const html =
-        `<p>Новая заявка преподавателя в <b>ELAS</b>:</p>` +
+        `<p>Новая заявка преподавателя в <b>konilai</b>:</p>` +
         `<ul>` +
         `<li><b>Email:</b> ${user.email}</li>` +
         `<li><b>Имя:</b> ${user.name ?? "—"}</li>` +
