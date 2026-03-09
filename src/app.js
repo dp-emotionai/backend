@@ -26,7 +26,10 @@ app.set("trust proxy", 1)
 
 app.use(
     cors({
-        origin: true,
+        origin: [
+            "https://elas-kappa.vercel.app",
+            "http://localhost:3000",
+        ],
         credentials: true,
     })
 )

@@ -46,6 +46,8 @@ export default async function authMiddleware(req,res,next){
             return res.status(401).json({message:"User not found"})
         if(user.status === "blocked")
             return res.status(403).json({message:"Account is blocked"})
+        if(user.status === "pending")
+            return res.status(403).json({message:"Account is awaiting admin approval"})
 
         req.user = {
             id: user.id,

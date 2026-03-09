@@ -5,6 +5,8 @@ import fetch from "node-fetch"
 import multer from "multer"
 import prisma from "../utils/prisma.js"
 import authMiddleware from "../middleware/authMiddleware.js"
+import { sendNewRegistrationAdminEmail } from "../utils/email.js"
+import { logAudit } from "../utils/audit.js"
 
 const router = express.Router()
 
@@ -141,17 +143,39 @@ router.post("/register",async(req,res)=>{
                 email:normalizedEmail,
                 password:hashedPassword,
                 name:name.trim(),
-                role:userRole
+                role:userRole,
+                status:"pending"
             }
         })
 
+        // уведомление админу о новой регистрации (best-effort)
+        try{
+            await sendNewRegistrationAdminEmail(user)
+        }catch(e){
+            console.error("EMAIL new registration failed",e)
+        }
+
+        // запись в аудит
+        try{
+            await logAudit(
+                null,
+                "user.registered",
+                "User",
+                user.id,
+                { email:user.email, role:user.role, status:user.status }
+            )
+        }catch(e){
+            console.error("AUDIT new registration failed",e)
+        }
+
         res.status(201).json({
-            message:"User created",
+            message:"Registration request submitted. Wait for admin approval.",
             user:{
                 id:user.id,
                 email:user.email,
                 name:user.name,
                 role:user.role,
+                status:user.status,
                 createdAt:user.createdAt
             }
         })
@@ -190,6 +214,10 @@ router.post("/login",async(req,res)=>{
         if(user.status === "blocked")
             return res.status(403).json({
                 message:"Account is blocked"
+            })
+        if(user.status === "pending")
+            return res.status(403).json({
+                message:"Account is awaiting admin approval"
             })
 
         const validPassword=await bcrypt.compare(
@@ -247,6 +275,7 @@ router.post("/login",async(req,res)=>{
                 email:user.email,
                 name:user.name,
                 role:user.role,
+                status:user.status,
                 createdAt:user.createdAt
             },
             device,

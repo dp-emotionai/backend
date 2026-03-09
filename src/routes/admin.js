@@ -2,6 +2,8 @@ import express from "express";
 import prisma from "../utils/prisma.js";
 import authMiddleware from "../middleware/authMiddleware.js";
 import roleMiddleware from "../middleware/roleMiddleware.js";
+import { sendUserApprovedEmail } from "../utils/email.js";
+import { logAudit } from "../utils/audit.js";
 
 const router = express.Router();
 
@@ -27,6 +29,45 @@ router.get("/users", async (req, res) => {
     } catch (e) {
         console.error("GET /admin/users", e);
         res.status(500).json({ error: "Failed to list users" });
+    }
+});
+
+// PUT /api/admin/users/:id/approve — activate pending user (admin only)
+router.put("/users/:id/approve", async (req, res) => {
+    try {
+        const id = req.params.id;
+        const user = await prisma.user.findUnique({ where: { id } });
+        if (!user) {
+            return res.status(404).json({ error: "User not found" });
+        }
+        const updated = await prisma.user.update({
+            where: { id },
+            data: { status: "active" },
+        });
+        try {
+            await sendUserApprovedEmail(updated);
+        } catch (e) {
+            console.error("EMAIL approve user failed", e);
+        }
+        try {
+            await logAudit(
+                req.user.id,
+                "user.approved",
+                "User",
+                updated.id,
+                { email: updated.email }
+            );
+        } catch (e) {
+            console.error("AUDIT approve user failed", e);
+        }
+        res.json({
+            id: updated.id,
+            email: updated.email,
+            status: updated.status,
+        });
+    } catch (e) {
+        console.error("PUT /admin/users/:id/approve", e);
+        res.status(500).json({ error: "Failed to approve user" });
     }
 });
 
