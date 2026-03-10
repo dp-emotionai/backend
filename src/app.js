@@ -27,7 +27,7 @@ app.set("trust proxy", 1)
 app.use(
     cors({
         origin: [
-            "https://elas-kappa.vercel.app",
+            "https://www.konilai.space",
             "http://localhost:3000",
         ],
         credentials: true,

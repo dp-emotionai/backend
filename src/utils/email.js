@@ -40,7 +40,7 @@ export async function sendUserApprovedEmail(user) {
         `<p>Здравствуйте${user.name ? ", " + user.name : ""}!</p>` +
         `<p>Ваш аккаунт в системе <b>konilAI</b> был одобрен администратором.</p>` +
         `<p>Теперь вы можете войти, используя свой email и пароль.</p>` +
-        `<p>С уважением,<br/>Команда ELAS</p>`
+        `<p>С уважением,<br/>Команда konilAI</p>`
 
     await sendMail({
         to: user.email,
