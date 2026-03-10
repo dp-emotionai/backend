@@ -183,7 +183,8 @@ router.post("/register",async(req,res)=>{
                 error:"Email и пароль обязательны"
             })
 
-        if(password && password.length<6)
+        const passwordStr = password != null ? String(password).trim() : ""
+        if (!passwordStr || passwordStr.length < 6)
             return res.status(400).json({
                 error:"Пароль должен быть не менее 6 символов"
             })
@@ -199,7 +200,7 @@ router.post("/register",async(req,res)=>{
                 error:"Пользователь с таким email уже существует"
             })
 
-        const hashedPassword = password ? await bcrypt.hash(password,10) : null
+        const hashedPassword = await bcrypt.hash(passwordStr, 10)
 
         // Генерируем код для подтверждения email и сохраняем как заявку на регистрацию
         const code = generateEmailCode()
@@ -287,6 +288,7 @@ router.post("/verify-email", async (req, res) => {
         const {
             email,
             code,
+            password: registerPassword,
             role,
             organization,
             profileUrl,
@@ -332,11 +334,19 @@ router.post("/verify-email", async (req, res) => {
         })
 
         if (!user && mode === "register") {
+            const rawPassword = registerPassword != null ? String(registerPassword).trim() : ""
+            const hasPassword = rawPassword.length >= 6
+            const passwordHash = hasPassword ? await bcrypt.hash(rawPassword, 10) : null
+            if (!hasPassword) {
+                console.warn("[auth/verify-email] User created without password (code-only login)", {
+                    email: normalizedEmail,
+                })
+            }
             const { dbRole, status } = computeRoleAndStatus(normalizedEmail, role, inviteCode)
             user = await prisma.user.create({
                 data:{
                     email: normalizedEmail,
-                    password: "", // пароль не используется при входе по коду
+                    password: passwordHash ?? "",
                     name: null,
                     role: dbRole,
                     status,
@@ -438,6 +448,13 @@ router.post("/login",async(req,res)=>{
             console.warn("[auth/login] 401: status PENDING", { userId: user.id, email: user.email })
             return res.status(401).json({
                 error:"Account is awaiting admin approval"
+            })
+        }
+
+        if (!user.password || user.password === "") {
+            console.warn("[auth/login] 401: no password set", { userId: user.id, email: user.email })
+            return res.status(401).json({
+                error:"Please set your password using the “Forgot password” link, then log in."
             })
         }
 
@@ -629,7 +646,8 @@ router.post("/reset-password", async (req, res) => {
             return res.status(400).json({ error: "Token and password are required" })
         }
 
-        if (String(password).length < 6) {
+        const newPasswordStr = String(password).trim()
+        if (!newPasswordStr || newPasswordStr.length < 6) {
             return res.status(400).json({
                 error: "Password must be at least 6 characters",
             })
@@ -663,7 +681,7 @@ router.post("/reset-password", async (req, res) => {
             return res.status(400).json({ error: "Invalid or expired token" })
         }
 
-        const hashed = await bcrypt.hash(String(password), 10)
+        const hashed = await bcrypt.hash(newPasswordStr, 10)
 
         await prisma.$transaction([
             prisma.user.update({
@@ -847,13 +865,19 @@ router.put("/change-password",authMiddleware,async(req,res)=>{
         const { currentPassword, newPassword } = req.body || {}
         if (!currentPassword || !newPassword)
             return res.status(400).json({ message:"currentPassword and newPassword required" })
-        if (newPassword.length < 6)
+        const newPasswordStr = String(newPassword).trim()
+        if (newPasswordStr.length < 6)
             return res.status(400).json({ message:"New password must be at least 6 characters" })
         const user = await prisma.user.findUnique({ where:{ id: req.user.id } })
         if (!user) return res.status(404).json({ message:"User not found" })
+        if (!user.password || user.password === "") {
+            return res.status(400).json({
+                message:"No password set. Use “Forgot password” to set one, then you can change it here.",
+            })
+        }
         const valid = await bcrypt.compare(currentPassword, user.password)
         if (!valid) return res.status(401).json({ message:"Current password is wrong" })
-        const hashed = await bcrypt.hash(newPassword, 10)
+        const hashed = await bcrypt.hash(newPasswordStr, 10)
         await prisma.user.update({
             where:{ id: req.user.id },
             data:{ password: hashed }
@@ -870,9 +894,14 @@ router.put("/change-email",authMiddleware,async(req,res)=>{
         const { password, newEmail } = req.body || {}
         if (!password || !newEmail)
             return res.status(400).json({ message:"password and newEmail required" })
-        const normalized = newEmail.trim().toLowerCase()
+        const normalized = String(newEmail).trim().toLowerCase()
         const user = await prisma.user.findUnique({ where:{ id: req.user.id } })
         if (!user) return res.status(404).json({ message:"User not found" })
+        if (!user.password || user.password === "") {
+            return res.status(400).json({
+                message:"No password set. Use “Forgot password” first, then you can change email.",
+            })
+        }
         const valid = await bcrypt.compare(password, user.password)
         if (!valid) return res.status(401).json({ message:"Password is wrong" })
         const existing = await prisma.user.findUnique({ where:{ email: normalized } })
