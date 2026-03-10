@@ -57,13 +57,14 @@ function handleSignalingConnection(ws) {
                 sessionMap = new Map()
                 signalingSessions.set(sessionId, sessionMap)
             }
+
             const participants = Array.from(sessionMap.values()).map((c) => ({
                 id: c.id,
                 role: c.role,
                 sessionId: c.sessionId,
             }))
 
-            sessionMap.set(clientId, ws)
+            sessionMap.set(clientId, { ws, id: clientId, role, sessionId })
 
             send(ws, {
                 type: "joined",
@@ -71,9 +72,9 @@ function handleSignalingConnection(ws) {
                 participants,
             })
 
-            for (const [otherId, otherWs] of sessionMap.entries()) {
+            for (const [otherId, otherClient] of sessionMap.entries()) {
                 if (otherId === clientId) continue
-                send(otherWs, {
+                send(otherClient.ws, {
                     type: "user-joined",
                     participant: { id: clientId, role, sessionId },
                 })
@@ -105,8 +106,8 @@ function handleSignalingConnection(ws) {
                 send(ws, { type: "error", message: "Missing 'to' clientId" })
                 return
             }
-            const targetWs = sessionMap.get(toId)
-            if (!targetWs) {
+            const target = sessionMap.get(toId)
+            if (!target) {
                 send(ws, { type: "error", message: "Target client not found" })
                 return
             }
@@ -122,7 +123,7 @@ function handleSignalingConnection(ws) {
                 forward.candidate = msg.candidate
             }
 
-            send(targetWs, forward)
+            send(target.ws, forward)
             return
         }
 
@@ -143,8 +144,8 @@ function cleanupSignalingClient(ws, clientInfo) {
     if (!sessionMap) return
 
     sessionMap.delete(id)
-    for (const [, otherWs] of sessionMap.entries()) {
-        send(otherWs, {
+    for (const [, otherClient] of sessionMap.entries()) {
+        send(otherClient.ws, {
             type: "user-left",
             participant: { id, sessionId },
         })
