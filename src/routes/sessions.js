@@ -549,4 +549,46 @@ router.post("/:id/consent", roleMiddleware("STUDENT"), async (req, res) => {
     }
 });
 
+// GET /api/sessions/:id/chat-policy
+router.get("/:id/chat-policy", async (req, res) => {
+    try {
+        const sessionId = req.params.id;
+        const userId = req.user.id;
+
+        const session = await prisma.session.findUnique({
+            where: { id: sessionId },
+            include: { group: true },
+        });
+
+        if (!session) {
+            return res.status(404).json({ error: "Session not found" });
+        }
+
+        const isOwner = session.createdById === userId;
+        const isAdmin = req.user.role === "ADMIN";
+        let isMember = false;
+
+        if (req.user.role === "STUDENT") {
+            const gm = await prisma.groupMember.findUnique({
+                where: { groupId_userId: { groupId: session.groupId, userId } },
+            });
+            isMember = !!gm;
+        }
+
+        if (!isOwner && !isAdmin && !isMember) {
+            return res.status(403).json({ error: "Forbidden" });
+        }
+
+        return res.json({
+            sessionId: session.id,
+            chatEnabled: true,
+            studentCanWrite: true,
+            studentCanSeeOthers: true,
+        });
+    } catch (e) {
+        console.error("GET /sessions/:id/chat-policy", e);
+        res.status(500).json({ error: "Failed to get chat policy" });
+    }
+});
+
 export default router;
