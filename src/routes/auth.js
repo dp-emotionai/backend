@@ -188,7 +188,7 @@ router.post("/register",async(req,res)=>{
                 error:"Пароль должен быть не менее 6 символов"
             })
 
-        const normalizedEmail=email.trim().toLowerCase()
+        const normalizedEmail = String(email).trim().toLowerCase()
 
         const existingUser=await prisma.user.findUnique({
             where:{email:normalizedEmail}
@@ -416,32 +416,42 @@ router.post("/login",async(req,res)=>{
                 error:"Email и пароль обязательны"
             })
 
+        const normalizedEmail = String(email).trim().toLowerCase()
+
         const user=await prisma.user.findUnique({
-            where:{email:email.trim().toLowerCase()}
+            where:{email:normalizedEmail}
         })
 
-        if(!user)
+        if(!user){
+            console.warn("[auth/login] 401: user not found", { email: normalizedEmail })
             return res.status(401).json({
                 error:"Неверный email или пароль"
             })
-        if(user.status === "BLOCKED")
+        }
+        if(user.status === "BLOCKED"){
+            console.warn("[auth/login] 403: status BLOCKED", { userId: user.id, email: user.email })
             return res.status(403).json({
                 error:"Account is blocked"
             })
-        if(user.status === "PENDING")
-            return res.status(403).json({
+        }
+        if(user.status === "PENDING"){
+            console.warn("[auth/login] 401: status PENDING", { userId: user.id, email: user.email })
+            return res.status(401).json({
                 error:"Account is awaiting admin approval"
             })
+        }
 
         const validPassword=await bcrypt.compare(
             password,
             user.password
         )
 
-        if(!validPassword)
+        if(!validPassword){
+            console.warn("[auth/login] 401: password mismatch", { userId: user.id, email: user.email })
             return res.status(401).json({
                 error:"Неверный email или пароль"
             })
+        }
 
         const accessToken=generateAccessToken(user.id,user.role)
         const refreshToken=generateRefreshToken(user.id)
@@ -496,8 +506,9 @@ router.post("/login",async(req,res)=>{
             isNewDevice
         })
 
-    }catch{
+    }catch(e){
 
+        console.error("[auth/login] 500:", e)
         res.status(500).json({error:"Server error"})
 
     }

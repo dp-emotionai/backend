@@ -24,6 +24,104 @@ async function ensureUniqueCode() {
 
 const ML_SERVICE_URL = process.env.ML_SERVICE_URL || null;
 
+const BUCKET_SECONDS = 60;
+
+async function aggregateSessionAnalytics(sessionId, startedAt, endedAt) {
+    const samples = await prisma.sessionEmotionSample.findMany({
+        where: { sessionId },
+        orderBy: { timestamp: "asc" },
+    });
+
+    if (samples.length === 0) {
+        const durationMs = startedAt && endedAt ? endedAt - startedAt : 0;
+        const durationMinutes = durationMs ? durationMs / 60000 : null;
+        await prisma.sessionSummary.upsert({
+            where: { sessionId },
+            create: {
+                sessionId,
+                avgEngagement: 0,
+                attentionDrops: 0,
+                quality: "medium",
+                avgStress: 0,
+                durationMinutes,
+            },
+            update: {
+                avgEngagement: 0,
+                attentionDrops: 0,
+                quality: "medium",
+                avgStress: 0,
+                durationMinutes,
+            },
+        });
+        return;
+    }
+
+    const avgRisk = samples.reduce((s, x) => s + x.risk, 0) / samples.length;
+    const avgEngagement = Math.max(0, Math.min(1, 1 - avgRisk));
+    const attentionDrops = samples.filter(
+        (x) => x.state === "HIGH_RISK" || x.risk > 0.7
+    ).length;
+    const avgStress = avgRisk;
+    const durationMs = startedAt && endedAt ? endedAt - startedAt : 0;
+    const durationMinutes = durationMs ? durationMs / 60000 : null;
+
+    let quality = "medium";
+    if (avgEngagement >= 0.7) quality = "good";
+    else if (avgEngagement < 0.4) quality = "poor";
+
+    await prisma.sessionSummary.upsert({
+        where: { sessionId },
+        create: {
+            sessionId,
+            avgEngagement,
+            attentionDrops,
+            quality,
+            avgStress,
+            durationMinutes,
+        },
+        update: {
+            avgEngagement,
+            attentionDrops,
+            quality,
+            avgStress,
+            durationMinutes,
+        },
+    });
+
+    const startTs = startedAt ? startedAt.getTime() : samples[0].timestamp.getTime();
+    const bucketsByIndex = new Map();
+
+    for (const s of samples) {
+        const elapsedSec = (s.timestamp.getTime() - startTs) / 1000;
+        const index = Math.floor(elapsedSec / BUCKET_SECONDS);
+        if (index < 0) continue;
+        if (!bucketsByIndex.has(index)) {
+            bucketsByIndex.set(index, []);
+        }
+        bucketsByIndex.get(index).push(s);
+    }
+
+    await prisma.sessionTimelineBucket.deleteMany({ where: { sessionId } });
+
+    const sortedIndices = Array.from(bucketsByIndex.keys()).sort((a, b) => a - b);
+    for (const index of sortedIndices) {
+        const list = bucketsByIndex.get(index);
+        const avgR = list.reduce((sum, x) => sum + x.risk, 0) / list.length;
+        const avgEng = Math.max(0, Math.min(1, 1 - avgR));
+        await prisma.sessionTimelineBucket.create({
+            data: {
+                sessionId,
+                index,
+                fromSec: index * BUCKET_SECONDS,
+                toSec: (index + 1) * BUCKET_SECONDS,
+                avgEngagement: avgEng,
+                avgStress: avgR,
+                avgRisk: avgR,
+            },
+        });
+    }
+}
+
 async function analyzeFrameWithML(image) {
     if (!ML_SERVICE_URL || !image) return null;
     try {
@@ -445,6 +543,19 @@ router.patch("/:id", async (req, res) => {
             data: updates,
             include: { group: true },
         });
+
+        if (updated.status === "finished") {
+            try {
+                await aggregateSessionAnalytics(
+                    updated.id,
+                    updated.startedAt,
+                    updated.endedAt
+                );
+            } catch (aggErr) {
+                console.error("PATCH /sessions/:id — aggregateSessionAnalytics", aggErr);
+            }
+        }
+
         return res.json({
             id: updated.id,
             title: updated.title,
