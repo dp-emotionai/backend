@@ -1,6 +1,7 @@
 import { WebSocketServer } from "ws"
 import crypto from "crypto"
 import jwt from "jsonwebtoken"
+import prisma from "../utils/prisma.js"
 
 const signalingClients = new Map()
 const signalingSessions = new Map()
@@ -66,6 +67,8 @@ function handleSignalingConnection(ws) {
 
             sessionMap.set(clientId, { ws, id: clientId, role, sessionId })
 
+            console.log("[WS signaling] join", { sessionId, role, clientId })
+
             send(ws, {
                 type: "joined",
                 self: { id: clientId, role, sessionId },
@@ -109,6 +112,7 @@ function handleSignalingConnection(ws) {
             const target = sessionMap.get(toId)
             if (!target) {
                 send(ws, { type: "error", message: "Target client not found" })
+                console.error("[WS signaling] target not found", { from: fromId, to: toId })
                 return
             }
 
@@ -124,6 +128,7 @@ function handleSignalingConnection(ws) {
             }
 
             send(target.ws, forward)
+            console.log("[WS signaling]", msg.type, { from: fromId, to: toId })
             return
         }
 
@@ -144,6 +149,7 @@ function cleanupSignalingClient(ws, clientInfo) {
     if (!sessionMap) return
 
     sessionMap.delete(id)
+    console.log("[WS signaling] leave", { sessionId, clientId: id })
     for (const [, otherClient] of sessionMap.entries()) {
         send(otherClient.ws, {
             type: "user-left",
@@ -166,7 +172,7 @@ function handleChatConnection(ws) {
         }
     }
 
-    ws.on("message", (raw) => {
+    ws.on("message", async (raw) => {
         const msg = safeJsonParse(raw)
         if (!msg || typeof msg.type !== "string") {
             send(ws, { type: "error", message: "Invalid message" })
@@ -205,6 +211,57 @@ function handleChatConnection(ws) {
             const id = typeof msg.id === "string" ? msg.id : null
             if (!room || !id) {
                 send(ws, { type: "error", message: "room and id required" })
+                return
+            }
+            try {
+                if (room === "group") {
+                    const group = await prisma.group.findUnique({ where: { id } })
+                    if (!group) {
+                        send(ws, { type: "error", message: "Group not found" })
+                        return
+                    }
+                    const isAdmin = client.role === "ADMIN"
+                    const isTeacher = client.role === "TEACHER" && group.teacherId === client.userId
+                    let isMember = false
+                    if (!isAdmin && !isTeacher) {
+                        const gm = await prisma.groupMember.findUnique({
+                            where: { groupId_userId: { groupId: id, userId: client.userId } },
+                        })
+                        isMember = !!gm
+                    }
+                    if (!isAdmin && !isTeacher && !isMember) {
+                        send(ws, { type: "error", message: "Forbidden" })
+                        return
+                    }
+                }
+                if (room === "session") {
+                    const session = await prisma.session.findUnique({
+                        where: { id },
+                        include: { group: true },
+                    })
+                    if (!session) {
+                        send(ws, { type: "error", message: "Session not found" })
+                        return
+                    }
+                    const isAdmin = client.role === "ADMIN"
+                    const isOwner = client.role === "TEACHER" && session.createdById === client.userId
+                    let isMember = false
+                    if (client.role === "STUDENT") {
+                        const gm = await prisma.groupMember.findUnique({
+                            where: {
+                                groupId_userId: { groupId: session.groupId, userId: client.userId },
+                            },
+                        })
+                        isMember = !!gm
+                    }
+                    if (!isAdmin && !isOwner && !isMember) {
+                        send(ws, { type: "error", message: "Forbidden" })
+                        return
+                    }
+                }
+            } catch (e) {
+                console.error("[WS chat] join error", e)
+                send(ws, { type: "error", message: "Join failed" })
                 return
             }
             const roomKey = `${room}:${id}`

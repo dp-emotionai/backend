@@ -533,7 +533,17 @@ router.post("/forgot-password", async (req, res) => {
                 },
             })
 
+            console.log("FORGOT-PASSWORD: sending reset email", {
+                userId: user.id,
+                email: user.email,
+            })
+
             await sendPasswordResetEmail(user.email, token)
+
+            console.log("FORGOT-PASSWORD: reset email queued", {
+                userId: user.id,
+                email: user.email,
+            })
 
             const ip = getClientIp(req)
             const userAgent = req.headers["user-agent"] || "unknown"

@@ -334,4 +334,129 @@ router.get("/analytics", async (req, res) => {
     }
 });
 
+// GET /api/student/me/emotions-summary
+router.get("/me/emotions-summary", async (req, res) => {
+    try {
+        const userId = req.user.id;
+
+        const samples = await prisma.sessionEmotionSample.findMany({
+            where: { userId },
+            orderBy: { timestamp: "desc" },
+            take: 5000,
+        });
+
+        if (!samples.length) {
+            return res.json({
+                analyzedSessions: 0,
+                avgEngagement: 0,
+                stressPeaks: 0,
+                bestTimeWindow: null,
+                engagementSeries: [],
+                dropsSeries: [],
+                weekCompare: {
+                    thisWeek: 0,
+                    prevWeek: 0,
+                    delta: 0,
+                },
+                emotionsDistribution: {},
+            });
+        }
+
+        const sessionsSet = new Set(samples.map((s) => s.sessionId));
+        const analyzedSessions = sessionsSet.size;
+
+        const avgEngagement = 1 - samples.reduce((sum, s) => sum + (s.risk ?? 0), 0) / samples.length;
+
+        const stressPeaks = samples.filter(
+            (s) => s.state === "HIGH_RISK" || (s.risk ?? 0) > 0.7
+        ).length;
+
+        const byHour = new Map();
+        for (const s of samples) {
+            const h = s.timestamp.getUTCHours();
+            if (!byHour.has(h)) byHour.set(h, []);
+            byHour.get(h).push(1 - (s.risk ?? 0));
+        }
+        let bestHour = null;
+        let bestScore = -1;
+        for (const [h, vals] of byHour.entries()) {
+            const score = vals.reduce((a, b) => a + b, 0) / vals.length;
+            if (score > bestScore) {
+                bestScore = score;
+                bestHour = h;
+            }
+        }
+        const pad = (n) => String(n).padStart(2, "0");
+        const bestTimeWindow =
+            bestHour === null ? null : `${pad(bestHour)}:00-${pad((bestHour + 2) % 24)}:00`;
+
+        const sessionList = Array.from(sessionsSet);
+        const engagementSeries = [];
+        const dropsSeries = [];
+        for (let i = 0; i < Math.min(6, sessionList.length); i++) {
+            const sid = sessionList[i];
+            const ss = samples.filter((s) => s.sessionId === sid);
+            const eng = 1 - ss.reduce((sum, s) => sum + (s.risk ?? 0), 0) / ss.length;
+            const drops = ss.filter(
+                (s) => s.state === "HIGH_RISK" || (s.risk ?? 0) > 0.7
+            ).length;
+            engagementSeries.push(Math.round(eng * 100));
+            dropsSeries.push(drops);
+        }
+
+        const now = new Date();
+        const thisWeekStart = new Date(now);
+        thisWeekStart.setDate(thisWeekStart.getDate() - 7);
+        const prevWeekStart = new Date(thisWeekStart);
+        prevWeekStart.setDate(prevWeekStart.getDate() - 7);
+
+        const thisWeekSamples = samples.filter(
+            (s) => s.timestamp >= thisWeekStart && s.timestamp <= now
+        );
+        const prevWeekSamples = samples.filter(
+            (s) => s.timestamp >= prevWeekStart && s.timestamp < thisWeekStart
+        );
+
+        const thisWeek =
+            thisWeekSamples.length
+                ? 1 -
+                  thisWeekSamples.reduce((sum, s) => sum + (s.risk ?? 0), 0) / thisWeekSamples.length
+                : 0;
+        const prevWeek =
+            prevWeekSamples.length
+                ? 1 -
+                  prevWeekSamples.reduce((sum, s) => sum + (s.risk ?? 0), 0) / prevWeekSamples.length
+                : 0;
+
+        const emotionsCount = new Map();
+        for (const s of samples) {
+            const key = s.dominantEmotion || s.emotion || "unknown";
+            emotionsCount.set(key, (emotionsCount.get(key) || 0) + 1);
+        }
+        const totalEmotions = Array.from(emotionsCount.values()).reduce((a, b) => a + b, 0);
+        const emotionsDistribution = {};
+        for (const [k, v] of emotionsCount.entries()) {
+            emotionsDistribution[k] = v / totalEmotions;
+        }
+
+        return res.json({
+            analyzedSessions,
+            avgEngagement,
+            stressPeaks,
+            bestTimeWindow,
+            engagementSeries,
+            dropsSeries,
+            weekCompare: {
+                thisWeek,
+                prevWeek,
+                delta: thisWeek - prevWeek,
+            },
+            emotionsDistribution,
+        });
+    } catch (e) {
+        console.error("GET /student/me/emotions-summary", e);
+        res.status(500).json({ error: "Failed to fetch emotions summary" });
+    }
+});
+
 export default router;

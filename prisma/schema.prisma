@@ -32,11 +32,12 @@ model User {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  refreshTokens       RefreshToken[]
-  notes               Note[]
-  documents           Document[]
-  analytics           Analytics[]
-  passwordResetTokens PasswordResetToken[]
+  refreshTokens          RefreshToken[]
+  notes                  Note[]
+  documents              Document[]
+  analytics              Analytics[]
+  passwordResetTokens    PasswordResetToken[]
+  sessionEmotionSamples  SessionEmotionSample[]
 
   groupsAsTeacher     Group[]
   groupMemberships    GroupMember[]
@@ -186,7 +187,59 @@ model Session {
   messages   SessionMessage[]
   chatPolicy SessionChatPolicy?
 
+  emotionSamples SessionEmotionSample[]
+  summary        SessionSummary?
+  timeline       SessionTimelineBucket[]
+
   @@index([groupId])
+}
+
+model SessionEmotionSample {
+  id              String   @id @default(uuid())
+  sessionId       String
+  userId          String
+  timestamp       DateTime @default(now())
+
+  emotion         String
+  confidence      Float
+  risk            Float
+  state           String
+  dominantEmotion String
+
+  session Session @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([sessionId, userId, timestamp])
+}
+
+model SessionSummary {
+  sessionId       String   @id
+  session         Session  @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  avgEngagement   Float
+  attentionDrops  Int
+  quality         String
+  avgStress       Float?
+  durationMinutes Float?
+
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+}
+
+model SessionTimelineBucket {
+  id            String   @id @default(uuid())
+  sessionId     String
+  session       Session  @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  index         Int
+  fromSec       Int
+  toSec         Int
+
+  avgEngagement Float
+  avgStress     Float
+  avgRisk       Float
+
+  @@index([sessionId, index])
 }
 
 model ConsentRecord {

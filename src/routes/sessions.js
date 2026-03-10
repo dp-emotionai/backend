@@ -1,20 +1,10 @@
 import express from "express";
+import fetch from "node-fetch";
 import prisma from "../utils/prisma.js";
 import authMiddleware from "../middleware/authMiddleware.js";
 import roleMiddleware from "../middleware/roleMiddleware.js";
 
 const router = express.Router();
-
-const liveMetricsStore = new Map();
-
-function getOrCreateSessionMetrics(sessionId) {
-    let m = liveMetricsStore.get(sessionId);
-    if (!m) {
-        m = new Map();
-        liveMetricsStore.set(sessionId, m);
-    }
-    return m;
-}
 
 function randomCode() {
     const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
@@ -30,6 +20,29 @@ async function ensureUniqueCode() {
         if (!exists) return code;
     }
     return "ELAS-" + Date.now().toString(36).toUpperCase().slice(-4);
+}
+
+const ML_SERVICE_URL = process.env.ML_SERVICE_URL || null;
+
+async function analyzeFrameWithML(image) {
+    if (!ML_SERVICE_URL || !image) return null;
+    try {
+        const res = await fetch(`${ML_SERVICE_URL}/analyze`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ image }),
+        });
+        if (!res.ok) {
+            console.error("ML service error:", res.status);
+            return null;
+        }
+        const data = await res.json();
+        console.log("ML service ok for frame");
+        return data;
+    } catch (e) {
+        console.error("ML service error:", e);
+        return null;
+    }
 }
 
 router.use(authMiddleware);
@@ -468,16 +481,47 @@ router.post("/:id/metrics", roleMiddleware("STUDENT"), async (req, res) => {
             return res.status(403).json({ error: "Not a member of this session's group" });
         }
         const body = req.body;
-        const metrics = getOrCreateSessionMetrics(sessionId);
-        metrics.set(userId, {
-            emotion: typeof body.emotion === "string" ? body.emotion : "Neutral",
-            confidence: typeof body.confidence === "number" ? body.confidence : 0,
-            risk: typeof body.risk === "number" ? body.risk : 0,
-            state: typeof body.state === "string" ? body.state : "NORMAL",
-            dominant_emotion: typeof body.dominant_emotion === "string" ? body.dominant_emotion : "Neutral",
-            updatedAt: new Date(),
+
+        let emotion = typeof body.emotion === "string" ? body.emotion : "Neutral";
+        let confidence = typeof body.confidence === "number" ? body.confidence : 0;
+        let risk = typeof body.risk === "number" ? body.risk : 0;
+        let state = typeof body.state === "string" ? body.state : "NORMAL";
+        let dominantEmotion =
+            typeof body.dominant_emotion === "string"
+                ? body.dominant_emotion
+                : typeof body.dominantEmotion === "string"
+                    ? body.dominantEmotion
+                    : "Neutral";
+
+        if (body && body.image) {
+            const ml = await analyzeFrameWithML(body.image);
+            if (ml) {
+                emotion = ml.emotion ?? emotion;
+                confidence = typeof ml.confidence === "number" ? ml.confidence : confidence;
+                risk = typeof ml.risk === "number" ? ml.risk : risk;
+                state = typeof ml.state === "string" ? ml.state : state;
+                dominantEmotion =
+                    typeof ml.dominant_emotion === "string"
+                        ? ml.dominant_emotion
+                        : typeof ml.dominantEmotion === "string"
+                            ? ml.dominantEmotion
+                            : dominantEmotion;
+            }
+        }
+
+        await prisma.sessionEmotionSample.create({
+            data: {
+                sessionId,
+                userId,
+                emotion,
+                confidence,
+                risk,
+                state,
+                dominantEmotion,
+            },
         });
-        return res.status(204).end();
+
+        return res.json({ ok: true });
     } catch (e) {
         console.error("POST /sessions/:id/metrics", e);
         res.status(500).json({ error: "Failed to store metrics" });
@@ -498,25 +542,42 @@ router.get("/:id/live-metrics", async (req, res) => {
         if (!isOwner && !isAdmin) {
             return res.status(403).json({ error: "Forbidden" });
         }
-        const metrics = liveMetricsStore.get(sessionId);
-        if (!metrics || metrics.size === 0) {
+        const samples = await prisma.sessionEmotionSample.findMany({
+            where: { sessionId },
+            orderBy: { timestamp: "desc" },
+            take: 1000,
+        });
+
+        if (!samples.length) {
             return res.json({ participants: [], avgRisk: 0, avgConfidence: 0 });
         }
-        const userIds = Array.from(metrics.keys());
+
+        const latestByUser = new Map();
+        for (const s of samples) {
+            if (!latestByUser.has(s.userId)) {
+                latestByUser.set(s.userId, s);
+            }
+        }
+
+        const userIds = Array.from(latestByUser.keys());
         const users = await prisma.user.findMany({
             where: { id: { in: userIds } },
             select: { id: true, email: true, name: true },
         });
         const userMap = new Map(users.map((u) => [u.id, u]));
         const participants = userIds.map((uid) => {
-            const m = metrics.get(uid);
+            const s = latestByUser.get(uid);
             const u = userMap.get(uid);
             return {
                 userId: uid,
                 name: u?.name ?? u?.email ?? uid,
                 email: u?.email,
-                ...m,
-                updatedAt: m.updatedAt.toISOString(),
+                emotion: s.emotion,
+                confidence: s.confidence,
+                risk: s.risk,
+                state: s.state,
+                dominant_emotion: s.dominantEmotion,
+                updatedAt: s.timestamp.toISOString(),
             };
         });
         const avgRisk = participants.reduce((s, p) => s + p.risk, 0) / participants.length;
@@ -588,6 +649,95 @@ router.get("/:id/chat-policy", async (req, res) => {
     } catch (e) {
         console.error("GET /sessions/:id/chat-policy", e);
         res.status(500).json({ error: "Failed to get chat policy" });
+    }
+});
+
+// GET /api/sessions/:id/summary
+router.get("/:id/summary", async (req, res) => {
+    try {
+        const sessionId = req.params.id;
+        const userId = req.user.id;
+
+        const session = await prisma.session.findUnique({
+            where: { id: sessionId },
+        });
+        if (!session) {
+            return res.status(404).json({ error: "Session not found" });
+        }
+
+        const isOwner = session.createdById === userId;
+        const isAdmin = req.user.role === "ADMIN";
+        if (!isOwner && !isAdmin) {
+            return res.status(403).json({ error: "Forbidden" });
+        }
+
+        const summary = await prisma.sessionSummary.findUnique({
+            where: { sessionId },
+        });
+
+        if (!summary) {
+            return res.json({
+                sessionId,
+                avgEngagement: 0,
+                attentionDrops: 0,
+                quality: "medium",
+                avgStress: 0,
+                durationMinutes: null,
+            });
+        }
+
+        return res.json({
+            sessionId,
+            avgEngagement: summary.avgEngagement,
+            attentionDrops: summary.attentionDrops,
+            quality: summary.quality,
+            avgStress: summary.avgStress ?? 0,
+            durationMinutes: summary.durationMinutes ?? null,
+        });
+    } catch (e) {
+        console.error("GET /sessions/:id/summary", e);
+        res.status(500).json({ error: "Failed to get session summary" });
+    }
+});
+
+// GET /api/sessions/:id/timeline
+router.get("/:id/timeline", async (req, res) => {
+    try {
+        const sessionId = req.params.id;
+        const userId = req.user.id;
+
+        const session = await prisma.session.findUnique({
+            where: { id: sessionId },
+        });
+        if (!session) {
+            return res.status(404).json({ error: "Session not found" });
+        }
+
+        const isOwner = session.createdById === userId;
+        const isAdmin = req.user.role === "ADMIN";
+        if (!isOwner && !isAdmin) {
+            return res.status(403).json({ error: "Forbidden" });
+        }
+
+        const buckets = await prisma.sessionTimelineBucket.findMany({
+            where: { sessionId },
+            orderBy: { index: "asc" },
+        });
+
+        return res.json({
+            sessionId,
+            buckets: buckets.map((b) => ({
+                index: b.index,
+                fromSec: b.fromSec,
+                toSec: b.toSec,
+                avgEngagement: b.avgEngagement,
+                avgStress: b.avgStress,
+                avgRisk: b.avgRisk,
+            })),
+        });
+    } catch (e) {
+        console.error("GET /sessions/:id/timeline", e);
+        res.status(500).json({ error: "Failed to get session timeline" });
     }
 });
 
