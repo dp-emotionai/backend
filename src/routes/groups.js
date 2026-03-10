@@ -88,6 +88,52 @@ router.get("/", async (req, res) => {
     }
 });
 
+// GET /groups/:id — details with access check
+router.get("/:id", async (req, res) => {
+    const user = getUser(req);
+    const groupId = req.params.id;
+
+    try {
+        const group = await prisma.group.findUnique({
+            where: { id: groupId },
+            include: {
+                teacher: { select: { email: true, name: true } },
+                _count: { select: { sessions: true } },
+            },
+        });
+
+        if (!group) {
+            return res.status(404).json({ error: "Group not found" });
+        }
+
+        const isOwner = group.teacherId === user.userId;
+        const isAdmin = user.role === "ADMIN";
+
+        const membership = await prisma.groupMember.findUnique({
+            where: { groupId_userId: { groupId, userId: user.userId } },
+        });
+
+        const isMember = !!membership;
+
+        if (!isOwner && !isAdmin && !isMember) {
+            return res.status(404).json({ error: "Group not found" });
+        }
+
+        return res.json({
+            id: group.id,
+            name: group.name,
+            teacherId: group.teacherId,
+            teacher: group.teacher.email,
+            teacherName: group.teacher.name,
+            sessionCount: group._count.sessions,
+            createdAt: group.createdAt,
+        });
+    } catch (e) {
+        console.error("GET /groups/:id", e);
+        res.status(500).json({ error: "Failed to get group" });
+    }
+});
+
 // GET /groups/:id/messages — cursor pagination (infinite scroll)
 // GET /groups/:id/messages — first page
 // GET /groups/:id/messages?cursor=msg_uuid — next 50 older messages

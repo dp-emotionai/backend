@@ -49,18 +49,40 @@ router.get("/users", async (req, res) => {
     }
 });
 
-// PUT /api/admin/users/:id/approve — activate pending user (admin only)
+// PUT /api/admin/users/:id/approve — activate / update user (admin only)
 router.put("/users/:id/approve", async (req, res) => {
     try {
         const id = req.params.id;
+        const { role, status } = req.body || {};
+
         const user = await prisma.user.findUnique({ where: { id } });
         if (!user) {
             return res.status(404).json({ error: "User not found" });
         }
+
+        // Маппим строковую роль с фронта в enum Prisma
+        let nextRole = user.role;
+        if (typeof role === "string") {
+            const lower = role.toLowerCase();
+            if (lower === "teacher") nextRole = "TEACHER";
+            else if (lower === "student") nextRole = "STUDENT";
+            else if (lower === "admin") nextRole = "ADMIN";
+        }
+
+        // Статус по умолчанию — APPROVED, можно переопределить из тела
+        let nextStatus = "APPROVED";
+        if (typeof status === "string" && status.trim()) {
+            nextStatus = status.trim().toUpperCase();
+        }
+
         const updated = await prisma.user.update({
             where: { id },
-            data: { status: "APPROVED" },
+            data: {
+                status: nextStatus,
+                role: nextRole,
+            },
         });
+
         try {
             await sendUserApprovedEmail(updated);
         } catch (e) {
@@ -72,7 +94,7 @@ router.put("/users/:id/approve", async (req, res) => {
                 "user.approved",
                 "User",
                 updated.id,
-                { email: updated.email }
+                { email: updated.email, role: updated.role, status: updated.status }
             );
         } catch (e) {
             console.error("AUDIT approve user failed", e);
