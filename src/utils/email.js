@@ -119,3 +119,29 @@ export async function sendEmailVerificationCode(email, code) {
         html,
     })
 }
+
+export async function sendPasswordResetEmail(email, token) {
+    const frontendBase = process.env.FRONTEND_URL || "https://www.konilai.space"
+    const base = frontendBase.replace(/\/+$/, "")
+    const resetLink = `${base}/auth/reset-password?token=${encodeURIComponent(token)}`
+
+    const subject = "Сброс пароля Konilai"
+
+    const text =
+        `Вы запросили сброс пароля для konilAI.\n\n` +
+        `Если вы не делали этот запрос, просто проигнорируйте это письмо.\n\n` +
+        `Ссылка для сброса пароля (действительна 30 минут):\n${resetLink}\n`
+
+    const html =
+        `<p>Вы запросили сброс пароля для <b>konilAI</b>.</p>` +
+        `<p>Если вы не делали этот запрос, просто проигнорируйте это письмо.</p>` +
+        `<p><a href="${resetLink}" target="_blank" rel="noopener noreferrer">Сбросить пароль</a></p>` +
+        `<p>Ссылка действует <b>30 минут</b>.</p>`
+
+    await sendMail({
+        to: email,
+        subject,
+        text,
+        html,
+    })
+}

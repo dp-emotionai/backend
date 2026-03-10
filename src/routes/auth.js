@@ -3,9 +3,10 @@ import bcrypt from "bcrypt"
 import jwt from "jsonwebtoken"
 import fetch from "node-fetch"
 import multer from "multer"
+import crypto from "crypto"
 import prisma from "../utils/prisma.js"
 import authMiddleware from "../middleware/authMiddleware.js"
-import { sendNewRegistrationAdminEmail, sendEmailVerificationCode } from "../utils/email.js"
+import { sendNewRegistrationAdminEmail, sendEmailVerificationCode, sendPasswordResetEmail } from "../utils/email.js"
 import { logAudit } from "../utils/audit.js"
 
 const router = express.Router()
@@ -153,6 +154,14 @@ const computeRoleAndStatus = (normalizedEmail, role, inviteCode) => {
 const generateEmailCode = () => {
     const n = Math.floor(100000 + Math.random() * 900000)
     return String(n)
+}
+
+const getClientIp = (req) => {
+    return (
+        req.headers["x-forwarded-for"]?.toString().split(",")[0].trim() ||
+        req.ip ||
+        "unknown"
+    )
 }
 
 router.post("/register",async(req,res)=>{
@@ -343,7 +352,7 @@ router.post("/verify-email", async (req, res) => {
                 error:"Account is blocked"
             })
         if(user.status === "PENDING")
-            return res.status(403).json({
+            return res.status(401).json({
                 error:"Account is awaiting admin approval"
             })
 
@@ -493,6 +502,185 @@ router.post("/login",async(req,res)=>{
 
     }
 
+})
+
+router.post("/forgot-password", async (req, res) => {
+    try {
+        const { email } = req.body || {}
+
+        if (!email) {
+            return res.status(200).json({
+                message: "If this email exists, password reset instructions have been sent",
+            })
+        }
+
+        const normalizedEmail = String(email).trim().toLowerCase()
+
+        const user = await prisma.user.findUnique({
+            where: { email: normalizedEmail },
+            select: { id: true, email: true },
+        })
+
+        if (user) {
+            const token = crypto.randomBytes(32).toString("hex")
+            const expiresAt = new Date(Date.now() + 30 * 60 * 1000)
+
+            await prisma.passwordResetToken.create({
+                data: {
+                    userId: user.id,
+                    token,
+                    expiresAt,
+                },
+            })
+
+            await sendPasswordResetEmail(user.email, token)
+
+            const ip = getClientIp(req)
+            const userAgent = req.headers["user-agent"] || "unknown"
+
+            await logAudit(
+                user.id,
+                "PASSWORD_RESET_REQUEST",
+                "PasswordReset",
+                user.id,
+                { email: user.email, ip, userAgent }
+            )
+        } else {
+            const ip = getClientIp(req)
+            const userAgent = req.headers["user-agent"] || "unknown"
+
+            await logAudit(
+                "anonymous",
+                "PASSWORD_RESET_REQUEST_UNKNOWN_EMAIL",
+                "PasswordReset",
+                null,
+                { email: normalizedEmail, ip, userAgent }
+            )
+        }
+
+        res.status(200).json({
+            message: "If this email exists, password reset instructions have been sent",
+        })
+    } catch (e) {
+        console.error("POST /forgot-password", e)
+        res.status(200).json({
+            message: "If this email exists, password reset instructions have been sent",
+        })
+    }
+})
+
+router.get("/reset-password/validate", async (req, res) => {
+    try {
+        const token = String(req.query.token || "").trim()
+
+        if (!token) {
+            return res.status(400).json({ error: "Invalid or expired token" })
+        }
+
+        const record = await prisma.passwordResetToken.findUnique({
+            where: { token },
+            include: { user: true },
+        })
+
+        if (
+            !record ||
+            record.usedAt ||
+            record.expiresAt < new Date()
+        ) {
+            return res.status(400).json({ error: "Invalid or expired token" })
+        }
+
+        return res.json({
+            ok: true,
+            email: record.user?.email ?? null,
+        })
+    } catch (e) {
+        console.error("GET /reset-password/validate", e)
+        return res.status(400).json({ error: "Invalid or expired token" })
+    }
+})
+
+router.post("/reset-password", async (req, res) => {
+    try {
+        const { token, password } = req.body || {}
+
+        if (!token || !password) {
+            return res.status(400).json({ error: "Token and password are required" })
+        }
+
+        if (String(password).length < 6) {
+            return res.status(400).json({
+                error: "Password must be at least 6 characters",
+            })
+        }
+
+        const record = await prisma.passwordResetToken.findUnique({
+            where: { token: String(token).trim() },
+        })
+
+        if (
+            !record ||
+            record.usedAt ||
+            record.expiresAt < new Date()
+        ) {
+            await logAudit(
+                "anonymous",
+                "PASSWORD_RESET_TOKEN_INVALID",
+                "PasswordReset",
+                null,
+                { token: "invalid_or_expired" }
+            )
+
+            return res.status(400).json({ error: "Invalid or expired token" })
+        }
+
+        const user = await prisma.user.findUnique({
+            where: { id: record.userId },
+        })
+
+        if (!user) {
+            return res.status(400).json({ error: "Invalid or expired token" })
+        }
+
+        const hashed = await bcrypt.hash(String(password), 10)
+
+        await prisma.$transaction([
+            prisma.user.update({
+                where: { id: user.id },
+                data: { password: hashed },
+            }),
+            prisma.passwordResetToken.update({
+                where: { id: record.id },
+                data: { usedAt: new Date() },
+            }),
+            prisma.passwordResetToken.updateMany({
+                where: {
+                    userId: user.id,
+                    usedAt: null,
+                    id: { not: record.id },
+                },
+                data: { usedAt: new Date() },
+            }),
+        ])
+
+        const ip = getClientIp(req)
+        const userAgent = req.headers["user-agent"] || "unknown"
+
+        await logAudit(
+            user.id,
+            "PASSWORD_RESET_SUCCESS",
+            "PasswordReset",
+            user.id,
+            { ip, userAgent }
+        )
+
+        return res.json({
+            message: "Password has been reset successfully",
+        })
+    } catch (e) {
+        console.error("POST /reset-password", e)
+        return res.status(500).json({ error: "Something went wrong" })
+    }
 })
 
 router.post("/refresh",async(req,res)=>{
