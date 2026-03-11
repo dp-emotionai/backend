@@ -30,6 +30,7 @@
     "node-mailjet": "^6.0.11",
     "nodemailer": "^8.0.2",
     "nodemon": "^3.1.13",
+    "pdfkit": "^0.17.2",
     "prisma": "^5.22.0",
     "resend": "^6.9.3",
     "socket.io": "^4.8.3",
