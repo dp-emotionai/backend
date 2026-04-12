@@ -41,7 +41,7 @@ app.use("/uploads", express.static("uploads"))
 
 /* ROUTES */
 app.get("/", (req, res) => {
-    res.json({ message: "ELAS Backend Running", status: "ok" })
+    res.json({ message: "Konil Backend Running", status: "ok" })
 })
 app.get("/health", (req, res) => {
     res.json({ status: "ok" })
