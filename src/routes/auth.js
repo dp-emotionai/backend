@@ -171,6 +171,11 @@ router.post("/register",async(req,res)=>{
         const {
             email,
             password,
+            name,
+            role,
+            organization,
+            profileUrl,
+            inviteCode,
         }=req.body
 
         if(!email)
@@ -183,7 +188,11 @@ router.post("/register",async(req,res)=>{
             return res.status(400).json({
                 error:"Пароль должен быть не менее 6 символов"
             })
-
+        const nameStr = name != null ? String(name).trim() : ""
+        if (!nameStr || nameStr.length < 2)
+            return res.status(400).json({
+                error: "Имя обязательно"
+            })
         const normalizedEmail = String(email).trim().toLowerCase()
 
         const existingUser=await prisma.user.findUnique({
@@ -275,6 +284,7 @@ router.post("/verify-email", async (req, res) => {
             email,
             code,
             password: registerPassword,
+            name,
             role,
             organization,
             profileUrl,
@@ -306,7 +316,6 @@ router.post("/verify-email", async (req, res) => {
             where:{ email: normalizedEmail }
         })
 
-        // Для login требуем существующего пользователя
         if (mode === "login" && !user)
             return res.status(401).json({ error:"Неверный email или пароль" })
 
@@ -320,19 +329,25 @@ router.post("/verify-email", async (req, res) => {
 
         if (!user && mode === "register") {
             const rawPassword = registerPassword != null ? String(registerPassword).trim() : ""
-            const hasPassword = rawPassword.length >= 6
-            const passwordHash = hasPassword ? await bcrypt.hash(rawPassword, 10) : null
-            if (!hasPassword) {
-                console.warn("[auth/verify-email] User created without password (code-only login)", {
-                    email: normalizedEmail,
+            if (!rawPassword || rawPassword.length < 6) {
+                return res.status(400).json({
+                    error: "Пароль должен быть не менее 6 символов"
                 })
             }
+
+            const nameStr = name != null ? String(name).trim() : ""
+            if (!nameStr || nameStr.length < 2) {
+                return res.status(400).json({
+                    error: "Имя обязательно"
+                })
+            }
+            const passwordHash = await bcrypt.hash(rawPassword, 10)
             const { dbRole, status } = computeRoleAndStatus(normalizedEmail, role, inviteCode)
             user = await prisma.user.create({
                 data:{
                     email: normalizedEmail,
-                    password: passwordHash ?? "",
-                    name: null,
+                    password: passwordHash,
+                    name: nameStr,
                     role: dbRole,
                     status,
                     organization: organization ? String(organization).trim() : null,
