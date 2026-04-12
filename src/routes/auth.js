@@ -171,11 +171,6 @@ router.post("/register",async(req,res)=>{
         const {
             email,
             password,
-            name,
-            role,
-            organization,
-            profileUrl,
-            inviteCode,
         }=req.body
 
         if(!email)
@@ -200,9 +195,6 @@ router.post("/register",async(req,res)=>{
                 error:"Пользователь с таким email уже существует"
             })
 
-        const hashedPassword = await bcrypt.hash(passwordStr, 10)
-
-        // Генерируем код для подтверждения email и сохраняем как заявку на регистрацию
         const code = generateEmailCode()
         const expiresAt = new Date(Date.now() + 10 * 60 * 1000)
 
@@ -233,17 +225,12 @@ router.post("/register",async(req,res)=>{
 
 })
 
-// Запросить 6-значный код по email (для входа / регистрации без пароля)
 router.post("/request-code", async (req, res) => {
 
     try{
 
         const {
             email,
-            role,
-            organization,
-            profileUrl,
-            inviteCode,
             purpose,
         } = req.body || {}
 
@@ -280,7 +267,6 @@ router.post("/request-code", async (req, res) => {
 
 })
 
-// Подтвердить код и войти / создать аккаунт
 router.post("/verify-email", async (req, res) => {
 
     try{
@@ -324,7 +310,6 @@ router.post("/verify-email", async (req, res) => {
         if (mode === "login" && !user)
             return res.status(401).json({ error:"Неверный email или пароль" })
 
-        // Для регистрации через код не даём перезаписывать уже существующий аккаунт
         if (mode === "register" && user)
             return res.status(400).json({ error:"Пользователь с таким email уже существует" })
 
@@ -355,6 +340,18 @@ router.post("/verify-email", async (req, res) => {
                     inviteCode: inviteCode ? String(inviteCode).trim() : null,
                 }
             })
+
+            if (dbRole === "TEACHER") {
+                try {
+                    await sendNewRegistrationAdminEmail(user)
+                } catch (e) {
+                    console.error("[auth/verify-email] Failed to send admin registration email", {
+                        userId: user.id,
+                        email: user.email,
+                        error: e?.message,
+                    })
+                }
+            }
         }
 
         if(user.status === "BLOCKED")

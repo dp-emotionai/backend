@@ -10,7 +10,6 @@ const router = express.Router();
 router.use(authMiddleware);
 router.use(roleMiddleware(["ADMIN"]));
 
-// GET /api/admin/users — list all users (admin only)
 router.get("/users", async (req, res) => {
     try {
         const users = await prisma.user.findMany({
@@ -111,7 +110,6 @@ router.put("/users/:id/approve", async (req, res) => {
     }
 });
 
-// DELETE /api/admin/users/:id — delete user (admin only)
 router.delete("/users/:id", async (req, res) => {
     try {
         const id = req.params.id;
@@ -150,7 +148,6 @@ router.put("/users/:id/block", async (req, res) => {
     }
 });
 
-// GET /api/admin/audit — audit log (admin only)
 router.get("/audit", async (req, res) => {
     try {
         const logs = await prisma.auditLog.findMany({

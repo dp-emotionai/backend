@@ -36,7 +36,6 @@ async function ensureGroupAccess(groupId, userId, role) {
     return { ok: true, group };
 }
 
-// ----- Export routes (must be before /session/:sessionId and /group/:groupId) -----
 router.get("/session/:id/export", requireTeacherOrAdmin, async (req, res) => {
     try {
         const sessionId = req.params.id;
@@ -283,8 +282,6 @@ router.get("/teacher/export", requireTeacherOrAdmin, async (req, res) => {
         return res.status(500).json({ error: "Export failed" });
     }
 });
-
-// ----- Aggregation: session -----
 router.get("/session/:sessionId", requireTeacherOrAdmin, async (req, res) => {
     try {
         const { sessionId } = req.params;
@@ -338,7 +335,6 @@ router.get("/session/:sessionId", requireTeacherOrAdmin, async (req, res) => {
     }
 });
 
-// ----- Aggregation: group -----
 router.get("/group/:groupId", requireTeacherOrAdmin, async (req, res) => {
     try {
         const { groupId } = req.params;
@@ -377,7 +373,6 @@ router.get("/group/:groupId", requireTeacherOrAdmin, async (req, res) => {
     }
 });
 
-// ----- Aggregation: teacher -----
 router.get("/teacher", requireTeacherOrAdmin, async (req, res) => {
     try {
         const userId = req.user.id;
@@ -422,7 +417,6 @@ router.get("/teacher", requireTeacherOrAdmin, async (req, res) => {
     }
 });
 
-// ----- Existing routes (unchanged) -----
 router.post("/", async (req, res) => {
     try {
         const { score, emotion } = req.body ?? {};

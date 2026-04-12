@@ -145,7 +145,6 @@ async function analyzeFrameWithML(image) {
 
 router.use(authMiddleware);
 
-// GET /api/sessions — list (admin: all; teacher: own; student: by group membership)
 router.get("/", async (req, res) => {
     try {
         const role = req.user.role;
@@ -263,7 +262,6 @@ router.get("/", async (req, res) => {
     }
 });
 
-// GET /api/sessions/:id/join-info
 router.get("/:id/join-info", async (req, res) => {
     try {
         const id = req.params.id;
@@ -323,7 +321,6 @@ router.get("/:id/join-info", async (req, res) => {
     }
 });
 
-// --- Чат сессии: сообщения (из PDF) ---
 router.get("/:id/messages", async (req, res) => {
     const userId = req.user.id;
     const sessionId = req.params.id;
@@ -426,7 +423,6 @@ router.post("/:id/messages", async (req, res) => {
     }
 });
 
-// GET /api/sessions/:id
 router.get("/:id", async (req, res) => {
     try {
         const id = req.params.id;
@@ -467,7 +463,6 @@ router.get("/:id", async (req, res) => {
     }
 });
 
-// POST /api/sessions — create (teacher)
 router.post("/", roleMiddleware("TEACHER"), async (req, res) => {
     try {
         const userId = req.user.id;
@@ -511,7 +506,6 @@ router.post("/", roleMiddleware("TEACHER"), async (req, res) => {
     }
 });
 
-// PATCH /api/sessions/:id
 router.patch("/:id", async (req, res) => {
     try {
         const id = req.params.id;
@@ -639,7 +633,6 @@ router.post("/:id/metrics", roleMiddleware("STUDENT"), async (req, res) => {
     }
 });
 
-// GET /api/sessions/:id/live-metrics
 router.get("/:id/live-metrics", async (req, res) => {
     try {
         const sessionId = req.params.id;
@@ -700,7 +693,6 @@ router.get("/:id/live-metrics", async (req, res) => {
     }
 });
 
-// POST /api/sessions/:id/consent
 router.post("/:id/consent", roleMiddleware("STUDENT"), async (req, res) => {
     try {
         const sessionId = req.params.id;
@@ -721,7 +713,6 @@ router.post("/:id/consent", roleMiddleware("STUDENT"), async (req, res) => {
     }
 });
 
-// GET /api/sessions/:id/chat-policy
 router.get("/:id/chat-policy", async (req, res) => {
     try {
         const sessionId = req.params.id;
@@ -763,7 +754,6 @@ router.get("/:id/chat-policy", async (req, res) => {
     }
 });
 
-// GET /api/sessions/:id/summary
 router.get("/:id/summary", async (req, res) => {
     try {
         const sessionId = req.params.id;

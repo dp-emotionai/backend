@@ -8,7 +8,6 @@ const router = express.Router();
 router.use(authMiddleware);
 router.use(roleMiddleware("STUDENT"));
 
-// GET /api/student/analytics/sessions?limit= — SessionPerformance list for Flutter
 router.get("/analytics/sessions", async (req, res) => {
     try {
         const limit = Math.min(parseInt(req.query.limit, 10) || 10, 50);
@@ -39,7 +38,6 @@ router.get("/analytics/sessions", async (req, res) => {
     }
 });
 
-// GET /api/student/sessions/upcoming — Flutter Session list (scheduled)
 router.get("/sessions/upcoming", async (req, res) => {
     try {
         const userId = req.user.id;
@@ -82,7 +80,6 @@ router.get("/sessions/upcoming", async (req, res) => {
     }
 });
 
-// GET /api/student/sessions/current — one active session or null
 router.get("/sessions/current", async (req, res) => {
     try {
         const userId = req.user.id;
@@ -126,7 +123,6 @@ router.get("/sessions/current", async (req, res) => {
     }
 });
 
-// GET /api/student/sessions/history?page=&limit=
 router.get("/sessions/history", async (req, res) => {
     try {
         const userId = req.user.id;
@@ -175,7 +171,6 @@ router.get("/sessions/history", async (req, res) => {
     }
 });
 
-// POST /api/student/sessions/:id/join
 router.post("/sessions/:id/join", async (req, res) => {
     try {
         const sessionId = req.params.id;
@@ -200,7 +195,6 @@ router.post("/sessions/:id/join", async (req, res) => {
     }
 });
 
-// POST /api/student/sessions/:id/leave
 router.post("/sessions/:id/leave", async (req, res) => {
     try {
         return res.json({ ok: true });
@@ -210,7 +204,6 @@ router.post("/sessions/:id/leave", async (req, res) => {
     }
 });
 
-// GET /api/student/sessions/:id/engagement — EngagementHistory for Flutter
 router.get("/sessions/:id/engagement", async (req, res) => {
     try {
         const sessionId = req.params.id;
@@ -261,7 +254,6 @@ router.get("/sessions/:id/engagement", async (req, res) => {
     }
 });
 
-// GET /api/student/analytics?start=&end= — AnalyticsData for Flutter
 router.get("/analytics", async (req, res) => {
     try {
         const userId = req.user.id;
@@ -334,7 +326,6 @@ router.get("/analytics", async (req, res) => {
     }
 });
 
-// GET /api/student/me/emotions-summary
 router.get("/me/emotions-summary", async (req, res) => {
     try {
         const userId = req.user.id;
