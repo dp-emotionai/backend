@@ -4,26 +4,58 @@ const resend = process.env.RESEND_API_KEY
     ? new Resend(process.env.RESEND_API_KEY)
     : null
 
+function assertSingleEmailRecipient(to) {
+    if (Array.isArray(to)) {
+        throw new Error(`sendMail expected single recipient, got array: ${JSON.stringify(to)}`)
+    }
+
+    const value = String(to || "").trim()
+
+    if (!value) {
+        throw new Error("sendMail recipient is empty")
+    }
+
+    if (value.includes(",")) {
+        throw new Error(`sendMail expected single recipient, got comma-separated list: ${value}`)
+    }
+
+    if (value.includes(";")) {
+        throw new Error(`sendMail expected single recipient, got semicolon-separated list: ${value}`)
+    }
+
+    return value.toLowerCase()
+}
+
 export async function sendMail({ to, subject, text, html }) {
     if (!resend) {
         console.warn("RESEND_API_KEY not set, skipping email send")
         return
     }
 
-    const fromEmail = process.env.RESEND_FROM_EMAIL || "konilAI<konil@konilai.space>"
+    const safeTo = assertSingleEmailRecipient(to)
+
+    const fromEmail =
+        process.env.RESEND_FROM_EMAIL || "konilAI <konil@konilai.space>"
 
     try {
+        console.log("[sendMail] recipient:", safeTo)
+
         const { data, error } = await resend.emails.send({
             from: fromEmail,
-            to,
+            to: safeTo,
             subject,
             text,
             html,
         })
 
         console.log("Email sent:", data?.id || null, "error:", error || null)
+
+        if (error) {
+            throw new Error(typeof error === "string" ? error : JSON.stringify(error))
+        }
     } catch (err) {
         console.error("Resend error:", err)
+        throw err
     }
 }
 

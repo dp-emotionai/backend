@@ -548,6 +548,8 @@ router.post("/forgot-password", async (req, res) => {
     try {
         const { email } = req.body || {}
 
+        console.log("[forgot-password] raw email:", email)
+
         if (!email) {
             return res.status(200).json({
                 message: "If this email exists, password reset instructions have been sent",
@@ -555,11 +557,14 @@ router.post("/forgot-password", async (req, res) => {
         }
 
         const normalizedEmail = String(email).trim().toLowerCase()
+        console.log("[forgot-password] normalized email:", normalizedEmail)
 
         const user = await prisma.user.findUnique({
             where: { email: normalizedEmail },
             select: { id: true, email: true },
         })
+
+        console.log("[forgot-password] found user:", user ? user.email : null)
 
         if (user) {
             const token = crypto.randomBytes(32).toString("hex")
@@ -573,14 +578,11 @@ router.post("/forgot-password", async (req, res) => {
                 },
             })
 
-            console.log("FORGOT-PASSWORD: sending reset email", {
-                userId: user.id,
-                email: user.email,
-            })
+            console.log("[forgot-password] sending reset email to:", user.email)
 
             await sendPasswordResetEmail(user.email, token)
 
-            console.log("FORGOT-PASSWORD: reset email queued", {
+            console.log("[forgot-password] reset email queued", {
                 userId: user.id,
                 email: user.email,
             })
@@ -608,12 +610,12 @@ router.post("/forgot-password", async (req, res) => {
             )
         }
 
-        res.status(200).json({
+        return res.status(200).json({
             message: "If this email exists, password reset instructions have been sent",
         })
     } catch (e) {
         console.error("POST /forgot-password", e)
-        res.status(200).json({
+        return res.status(200).json({
             message: "If this email exists, password reset instructions have been sent",
         })
     }
