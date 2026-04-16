@@ -277,9 +277,7 @@ router.post("/request-code", async (req, res) => {
 })
 
 router.post("/verify-email", async (req, res) => {
-
-    try{
-
+    try {
         const {
             email,
             code,
@@ -291,69 +289,72 @@ router.post("/verify-email", async (req, res) => {
             inviteCode,
         } = req.body || {}
 
-        if (!email || !code)
-            return res.status(400).json({ error:"Email и пароль обязательны" })
+        if (!email || !code) {
+            return res.status(400).json({ error: "Email и код обязательны" })
+        }
 
         const normalizedEmail = String(email).trim().toLowerCase()
         const codeStr = String(code).trim()
 
         const record = await prisma.emailCode.findFirst({
-            where:{
+            where: {
                 email: normalizedEmail,
                 code: codeStr,
                 consumedAt: null,
                 expiresAt: { gt: new Date() },
             },
-            orderBy:{ createdAt:"desc" },
+            orderBy: { createdAt: "desc" },
         })
 
-        if (!record)
-            return res.status(401).json({ error:"Неверный email или пароль" })
+        if (!record) {
+            return res.status(401).json({ error: "Неверный email или код" })
+        }
 
         const mode = record.purpose || "login"
 
         let user = await prisma.user.findUnique({
-            where:{ email: normalizedEmail }
+            where: { email: normalizedEmail },
         })
 
-        if (mode === "login" && !user)
-            return res.status(401).json({ error:"Неверный email или пароль" })
+        if (mode === "login" && !user) {
+            return res.status(401).json({ error: "Неверный email или код" })
+        }
 
-        if (mode === "register" && user)
-            return res.status(400).json({ error:"Пользователь с таким email уже существует" })
-
-        await prisma.emailCode.update({
-            where:{ id: record.id },
-            data:{ consumedAt: new Date() },
-        })
+        if (mode === "register" && user) {
+            return res.status(400).json({ error: "Пользователь с таким email уже существует" })
+        }
 
         if (!user && mode === "register") {
-            const rawPassword = registerPassword != null ? String(registerPassword).trim() : ""
+            const rawPassword =
+                registerPassword != null ? String(registerPassword).trim() : ""
+
             if (!rawPassword || rawPassword.length < 6) {
                 return res.status(400).json({
-                    error: "Пароль должен быть не менее 6 символов"
+                    error: "Пароль должен быть не менее 6 символов",
                 })
             }
 
             const nameStr = name != null ? String(name).trim() : ""
-            if (!nameStr || nameStr.length < 2) {
-                return res.status(400).json({
-                    error: "Имя обязательно"
-                })
-            }
+            const finalName = nameStr.length >= 2 ? nameStr : "User"
+
             const passwordHash = await bcrypt.hash(rawPassword, 10)
-            const { dbRole, status } = computeRoleAndStatus(normalizedEmail, role, inviteCode)
+            const { dbRole, status } = computeRoleAndStatus(
+                normalizedEmail,
+                role,
+                inviteCode
+            )
+
             user = await prisma.user.create({
-                data:{
+                data: {
                     email: normalizedEmail,
                     password: passwordHash,
-                    name: nameStr,
+                    name: finalName,
                     role: dbRole,
                     status,
                     organization: organization ? String(organization).trim() : null,
                     profileUrl: profileUrl ? String(profileUrl).trim() : null,
                     inviteCode: inviteCode ? String(inviteCode).trim() : null,
-                }
+                },
             })
 
             if (dbRole === "TEACHER") {
@@ -369,62 +370,71 @@ router.post("/verify-email", async (req, res) => {
             }
         }
 
-        if(user.status === "BLOCKED")
+        if (user.status === "BLOCKED") {
             return res.status(403).json({
-                error:"Account is blocked"
+                error: "Account is blocked",
             })
-        if(user.status === "PENDING")
+        }
+
+        if (user.status === "PENDING") {
             return res.status(401).json({
-                error:"Account is awaiting admin approval"
+                error: "Account is awaiting admin approval",
             })
+        }
 
-        const accessToken=generateAccessToken(user.id,user.role)
-        const refreshToken=generateRefreshToken(user.id)
+        await prisma.emailCode.update({
+            where: { id: record.id },
+            data: { consumedAt: new Date() },
+        })
 
-        const device=req.headers["user-agent"] ?? "unknown"
-        const location=await getLocationFromIP(req)
+        const accessToken = generateAccessToken(user.id, user.role)
+        const refreshToken = generateRefreshToken(user.id)
+
+        const device = req.headers["user-agent"] ?? "unknown"
+        const location = await getLocationFromIP(req)
 
         await prisma.refreshToken.create({
-            data:{
-                token:refreshToken,
-                userId:user.id,
+            data: {
+                token: refreshToken,
+                userId: user.id,
                 device,
                 location,
-                userAgent:device,
-                lastUsedAt:new Date(),
-                expiresAt:new Date(Date.now()+604800000)
-            }
+                userAgent: device,
+                lastUsedAt: new Date(),
+                expiresAt: new Date(Date.now() + 604800000),
+            },
         })
 
         await enforceMaxDevices(user.id)
         await cleanupExpiredTokens()
 
-        res.cookie("refreshToken",refreshToken,{
-            httpOnly:true,
-            secure:true,
-            sameSite:"none",
-            maxAge:604800000
+        res.cookie("refreshToken", refreshToken, {
+            httpOnly: true,
+            secure: true,
+            sameSite: "none",
+            maxAge: 604800000,
         })
 
-        res.json({
-            token:accessToken,
-            user:{
-                id:user.id,
-                email:user.email,
-                name:user.name,
-                role:user.role === "ADMIN" ? "admin" : user.role === "TEACHER" ? "teacher" : "student",
-                status:user.status,
-                createdAt:user.createdAt
+        return res.json({
+            token: accessToken,
+            user: {
+                id: user.id,
+                email: user.email,
+                name: user.name,
+                role:
+                    user.role === "ADMIN"
+                        ? "admin"
+                        : user.role === "TEACHER"
+                            ? "teacher"
+                            : "student",
+                status: user.status,
+                createdAt: user.createdAt,
             },
         })
-
-    }catch(e){
-
+    } catch (e) {
         console.error("VERIFY-CODE ERROR", e)
-        res.status(500).json({ error:"Server error" })
-
+        return res.status(500).json({ error: "Server error" })
     }
-
 })
 
 router.post("/login",async(req,res)=>{
