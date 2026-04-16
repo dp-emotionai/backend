@@ -4,6 +4,8 @@ const resend = process.env.RESEND_API_KEY
     ? new Resend(process.env.RESEND_API_KEY)
     : null
 
+const EMAIL_TIMEOUT_MS = 12000
+
 function assertSingleEmailRecipient(to) {
     if (Array.isArray(to)) {
         throw new Error(`sendMail expected single recipient, got array: ${JSON.stringify(to)}`)
@@ -26,53 +28,84 @@ function assertSingleEmailRecipient(to) {
     return value.toLowerCase()
 }
 
+function withTimeout(promise, ms, label = "async operation") {
+    return Promise.race([
+        promise,
+        new Promise((_, reject) => {
+            setTimeout(() => {
+                reject(new Error(`${label} timed out after ${ms}ms`))
+            }, ms)
+        }),
+    ])
+}
+
 export async function sendMail({ to, subject, text, html }) {
     if (!resend) {
         console.warn("RESEND_API_KEY not set, skipping email send")
-        return
+        return { skipped: true }
     }
 
     const safeTo = assertSingleEmailRecipient(to)
-
     const fromEmail =
-        process.env.RESEND_FROM_EMAIL || "konilAI <konil@konilai.space>"
+        process.env.RESEND_FROM_EMAIL || "KonilAI <no-reply@konilai.space>"
 
     try {
-        console.log("[sendMail] recipient:", safeTo)
-
-        const { data, error } = await resend.emails.send({
-            from: fromEmail,
+        console.log("[sendMail] sending email", {
             to: safeTo,
             subject,
-            text,
-            html,
         })
 
-        console.log("Email sent:", data?.id || null, "error:", error || null)
+        const result = await withTimeout(
+            resend.emails.send({
+                from: fromEmail,
+                to: safeTo,
+                subject,
+                text,
+                html,
+            }),
+            EMAIL_TIMEOUT_MS,
+            "resend.emails.send"
+        )
+
+        const { data, error } = result || {}
+
+        console.log("[sendMail] result", {
+            id: data?.id || null,
+            error: error || null,
+        })
 
         if (error) {
             throw new Error(typeof error === "string" ? error : JSON.stringify(error))
         }
+
+        return {
+            ok: true,
+            id: data?.id || null,
+        }
     } catch (err) {
-        console.error("Resend error:", err)
+        console.error("[sendMail] error", {
+            to: safeTo,
+            subject,
+            error: err?.message || err,
+        })
         throw err
     }
 }
 
 export async function sendUserApprovedEmail(user) {
-    const subject = "Ваш аккаунт в konilAI одобрен администратором"
+    const subject = "Ваш аккаунт в KonilAI одобрен администратором"
 
     const text =
         `Здравствуйте${user.name ? ", " + user.name : ""}!\n\n` +
-        "Ваш аккаунт в системе konilAI был одобрен администратором. " +
+        "Ваш аккаунт в системе KonilAI был одобрен администратором. " +
         "Теперь вы можете войти, используя свой email и пароль.\n\n" +
-        "С уважением,\nКоманда konilAI"
+        "С уважением,\nКоманда KonilAI"
 
     const html =
         `<p>Здравствуйте${user.name ? ", " + user.name : ""}!</p>` +
-        `<p>Ваш аккаунт в системе <b>konilAI</b> был одобрен администратором.</p>` +
+        `<p>Ваш аккаунт в системе <b>KonilAI</b> был одобрен администратором.</p>` +
         `<p>Теперь вы можете войти, используя свой email и пароль.</p>` +
-        `<p>С уважением,<br/>Команда konilAI</p>`
+        `<p>С уважением,<br/>Команда KonilAI</p>`
 
     await sendMail({
         to: user.email,
@@ -92,14 +125,13 @@ export async function sendNewRegistrationAdminEmail(user) {
 
     const frontendBase = process.env.FRONTEND_URL || ""
 
-    const adminLink =
-        frontendBase
-            ? `${frontendBase.replace(/\/+$/, "")}/admin/users?userId=${user.id}`
-            : "/admin/users"
+    const adminLink = frontendBase
+        ? `${frontendBase.replace(/\/+$/, "")}/admin/users?userId=${user.id}`
+        : "/admin/users"
 
     const status = user.status || "PENDING"
 
-    const subject = `Новая заявка преподавателя в konilAI: ${user.email}`
+    const subject = `Новая заявка преподавателя в KonilAI: ${user.email}`
 
     const text =
         `Email: ${user.email}\n` +
@@ -112,7 +144,7 @@ export async function sendNewRegistrationAdminEmail(user) {
         `Ссылка для админа: ${adminLink}`
 
     const html =
-        `<p>Новая заявка преподавателя в <b>konilAI</b>:</p>` +
+        `<p>Новая заявка преподавателя в <b>KonilAI</b>:</p>` +
         `<ul>` +
         `<li><b>Email:</b> ${user.email}</li>` +
         `<li><b>Имя:</b> ${user.name ?? "—"}</li>` +
@@ -133,16 +165,16 @@ export async function sendNewRegistrationAdminEmail(user) {
 }
 
 export async function sendEmailVerificationCode(email, code) {
-    const subject = "Ваш код входа в konilAI"
+    const subject = "Ваш код подтверждения KonilAI"
 
     const text =
-        `Ваш код подтверждения для konilAI: ${code}\n\n` +
-        "Введите этот код в приложении, чтобы подтвердить email и войти."
+        `Ваш код подтверждения для KonilAI: ${code}\n\n` +
+        "Введите этот код в приложении, чтобы подтвердить email и завершить вход или регистрацию."
 
     const html =
-        `<p>Ваш код подтверждения для <b>ELAS</b>:</p>` +
+        `<p>Ваш код подтверждения для <b>KonilAI</b>:</p>` +
         `<p style="font-size: 24px; font-weight: bold; letter-spacing: 4px;">${code}</p>` +
-        `<p>Введите этот код в приложении, чтобы подтвердить email и войти.</p>`
+        `<p>Введите этот код в приложении, чтобы подтвердить email и завершить вход или регистрацию.</p>`
 
     await sendMail({
         to: email,
@@ -157,15 +189,15 @@ export async function sendPasswordResetEmail(email, token) {
     const base = frontendBase.replace(/\/+$/, "")
     const resetLink = `${base}/auth/reset-password?token=${encodeURIComponent(token)}`
 
-    const subject = "Сброс пароля Konilai"
+    const subject = "Сброс пароля KonilAI"
 
     const text =
-        `Вы запросили сброс пароля для konilAI.\n\n` +
+        `Вы запросили сброс пароля для KonilAI.\n\n` +
         `Если вы не делали этот запрос, просто проигнорируйте это письмо.\n\n` +
         `Ссылка для сброса пароля (действительна 30 минут):\n${resetLink}\n`
 
     const html =
-        `<p>Вы запросили сброс пароля для <b>konilAI</b>.</p>` +
+        `<p>Вы запросили сброс пароля для <b>KonilAI</b>.</p>` +
         `<p>Если вы не делали этот запрос, просто проигнорируйте это письмо.</p>` +
         `<p><a href="${resetLink}" target="_blank" rel="noopener noreferrer">Сбросить пароль</a></p>` +
         `<p>Ссылка действует <b>30 минут</b>.</p>`
