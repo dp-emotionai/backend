@@ -3,12 +3,12 @@ import fetch from "node-fetch";
 import prisma from "../utils/prisma.js";
 import authMiddleware from "../middleware/authMiddleware.js";
 import roleMiddleware from "../middleware/roleMiddleware.js";
-
+import { getIO } from "../ws/server.js";
 const router = express.Router();
 
 function randomCode() {
     const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
-    let s = "ELAS-";
+    let s = "konilAI-";
     for (let i = 0; i < 4; i++) s += chars[Math.floor(Math.random() * chars.length)];
     return s;
 }
@@ -19,7 +19,7 @@ async function ensureUniqueCode() {
         const exists = await prisma.session.findUnique({ where: { code } });
         if (!exists) return code;
     }
-    return "ELAS-" + Date.now().toString(36).toUpperCase().slice(-4);
+    return "konilAI-" + Date.now().toString(36).toUpperCase().slice(-4);
 }
 
 const ML_SERVICE_URL = process.env.ML_SERVICE_URL || null;
@@ -375,30 +375,38 @@ router.post("/:id/messages", async (req, res) => {
     const userId = req.user.id;
     const sessionId = req.params.id;
     const { type, text, channel } = req.body || {};
+
     if (!type || !text || !String(text).trim()) {
         res.status(400).json({ error: "type and text required" });
         return;
     }
+
     try {
         const session = await prisma.session.findUnique({ where: { id: sessionId } });
+
         if (!session) {
             res.status(404).json({ error: "Session not found" });
             return;
         }
+
         const isOwner = session.createdById === userId;
         const isAdmin = req.user.role === "ADMIN";
         let isMember = false;
+
         if (req.user.role === "STUDENT") {
             const gm = await prisma.groupMember.findUnique({
                 where: { groupId_userId: { groupId: session.groupId, userId } },
             });
             isMember = !!gm;
         }
+
         if (!isOwner && !isAdmin && !isMember) {
             res.status(403).json({ error: "Forbidden" });
             return;
         }
+
         const ch = channel === "help" ? "help" : "public";
+
         const msg = await prisma.sessionMessage.create({
             data: {
                 sessionId,
@@ -408,7 +416,8 @@ router.post("/:id/messages", async (req, res) => {
                 channel: ch,
             },
         });
-        res.status(201).json({
+
+        const payload = {
             id: msg.id,
             sessionId: msg.sessionId,
             senderId: msg.senderId,
@@ -416,7 +425,16 @@ router.post("/:id/messages", async (req, res) => {
             text: msg.text,
             channel: msg.channel,
             createdAt: msg.createdAt,
-        });
+        };
+
+        try {
+            const io = getIO();
+            io.to(`session:${sessionId}`).emit("session:message", payload);
+        } catch (wsError) {
+            console.error("POST /sessions/:id/messages emit error", wsError);
+        }
+
+        res.status(201).json(payload);
     } catch (e) {
         console.error("POST /sessions/:id/messages", e);
         res.status(500).json({ error: "Failed to create message" });
