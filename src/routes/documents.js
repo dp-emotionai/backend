@@ -41,6 +41,21 @@ router.post(
                 });
             }
 
+            if (noteId && String(noteId).trim()) {
+                const note = await prisma.note.findFirst({
+                    where: {
+                        id: String(noteId).trim(),
+                        userId: req.user.id,
+                    },
+                });
+
+                if (!note) {
+                    return res.status(404).json({
+                        message: "Note not found",
+                    });
+                }
+            }
+
             const document = await prisma.document.create({
                 data: {
                     filename: req.file.originalname,
@@ -87,7 +102,6 @@ router.get("/", authMiddleware, async (req, res) => {
         });
     }
 });
-
 
 router.delete("/:id", authMiddleware, async (req, res) => {
     try {

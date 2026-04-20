@@ -163,7 +163,7 @@ router.get("/", async (req, res) => {
                     endedAt: true,
                     createdAt: true,
                     group: { select: { name: true } },
-                    teacher: { select: { email: true, name: true } },
+                    teacher: { select: { email: true, firstName: true, lastName: true } },
                 },
                 orderBy: { createdAt: "desc" },
                 take: 100,
@@ -178,7 +178,7 @@ router.get("/", async (req, res) => {
                     groupId: s.groupId,
                     groupName: s.group.name,
                     teacher: s.teacher.email,
-                    teacherName: s.teacher.name,
+                    teacherName: [s.teacher.firstName, s.teacher.lastName].filter(Boolean).join(" "),
                     startedAt: s.startedAt,
                     endedAt: s.endedAt,
                     createdAt: s.createdAt,
@@ -447,7 +447,7 @@ router.get("/:id", async (req, res) => {
         const userId = req.user.id;
         const session = await prisma.session.findUnique({
             where: { id },
-            include: { group: true, teacher: { select: { id: true, email: true, name: true } } },
+            include: { group: true, teacher: { select: { id: true, email: true, firstName: true, lastName: true } } },
         });
         if (!session) {
             return res.status(404).json({ error: "Session not found" });
@@ -470,7 +470,7 @@ router.get("/:id", async (req, res) => {
             groupId: session.groupId,
             groupName: session.group.name,
             teacher: session.teacher.email,
-            teacherName: session.teacher.name,
+            teacherName: [session.teacher.firstName, session.teacher.lastName].filter(Boolean).join(" "),
             startedAt: session.startedAt,
             endedAt: session.endedAt,
             createdAt: session.createdAt,
@@ -684,7 +684,7 @@ router.get("/:id/live-metrics", async (req, res) => {
         const userIds = Array.from(latestByUser.keys());
         const users = await prisma.user.findMany({
             where: { id: { in: userIds } },
-            select: { id: true, email: true, name: true },
+            select: { id: true, email: true, firstName: true, lastName: true },
         });
         const userMap = new Map(users.map((u) => [u.id, u]));
         const participants = userIds.map((uid) => {
@@ -692,7 +692,7 @@ router.get("/:id/live-metrics", async (req, res) => {
             const u = userMap.get(uid);
             return {
                 userId: uid,
-                name: u?.name ?? u?.email ?? uid,
+                name: [u?.firstName, u?.lastName].filter(Boolean).join(" ") || u?.email || uid,
                 email: u?.email,
                 emotion: s.emotion,
                 confidence: s.confidence,

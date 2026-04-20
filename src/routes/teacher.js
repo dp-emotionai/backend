@@ -32,7 +32,7 @@ router.get("/groups", async (req, res) => {
         const groups = await prisma.group.findMany({
             where: { teacherId: userId },
             include: {
-                teacher: { select: { email: true, name: true } },
+                teacher: { select: { email: true, firstName: true, lastName: true } },
                 _count: { select: { sessions: true } },
             },
             orderBy: { createdAt: "desc" },
@@ -43,7 +43,7 @@ router.get("/groups", async (req, res) => {
                 name: g.name,
                 teacherId: g.teacherId,
                 teacher: g.teacher.email,
-                teacherName: g.teacher.name,
+                teacherName: [g.teacher.firstName, g.teacher.lastName].filter(Boolean).join(" "),
                 sessionCount: g._count.sessions,
                 createdAt: g.createdAt,
             }))

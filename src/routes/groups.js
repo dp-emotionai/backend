@@ -17,7 +17,7 @@ router.get("/", async (req, res) => {
         if (user.role === "ADMIN") {
             const groups = await prisma.group.findMany({
                 include: {
-                    teacher: { select: { email: true, name: true } },
+                    teacher: { select: { email: true, firstName: true, lastName: true } },
                     _count: { select: { sessions: true } },
                 },
                 orderBy: { createdAt: "desc" },
@@ -29,7 +29,7 @@ router.get("/", async (req, res) => {
                     name: g.name,
                     teacherId: g.teacherId,
                     teacher: g.teacher.email,
-                    teacherName: g.teacher.name,
+                    teacherName: [g.teacher.firstName, g.teacher.lastName].filter(Boolean).join(" "),
                     sessionCount: g._count.sessions,
                     createdAt: g.createdAt,
                 }))
@@ -40,7 +40,7 @@ router.get("/", async (req, res) => {
             const groups = await prisma.group.findMany({
                 where: { teacherId: user.userId },
                 include: {
-                    teacher: { select: { email: true, name: true } },
+                    teacher: { select: { email: true, firstName: true, lastName: true } },
                     _count: { select: { sessions: true } },
                 },
                 orderBy: { createdAt: "desc" },
@@ -52,7 +52,7 @@ router.get("/", async (req, res) => {
                     name: g.name,
                     teacherId: g.teacherId,
                     teacher: g.teacher.email,
-                    teacherName: g.teacher.name,
+                    teacherName: [g.teacher.firstName, g.teacher.lastName].filter(Boolean).join(" "),
                     sessionCount: g._count.sessions,
                     createdAt: g.createdAt,
                 }))
@@ -64,7 +64,7 @@ router.get("/", async (req, res) => {
             include: {
                 group: {
                     include: {
-                        teacher: { select: { email: true, name: true } },
+                        teacher: { select: { email: true, firstName: true, lastName: true } },
                         _count: { select: { sessions: true } },
                     },
                 },
@@ -77,7 +77,7 @@ router.get("/", async (req, res) => {
                 name: m.group.name,
                 teacherId: m.group.teacherId,
                 teacher: m.group.teacher.email,
-                teacherName: m.group.teacher.name,
+                teacherName: [m.group.teacher.firstName, m.group.teacher.lastName].filter(Boolean).join(" "),
                 sessionCount: m.group._count.sessions,
                 createdAt: m.group.createdAt,
             }))
@@ -97,7 +97,7 @@ router.get("/:id", async (req, res) => {
         const group = await prisma.group.findUnique({
             where: { id: groupId },
             include: {
-                teacher: { select: { email: true, name: true } },
+                teacher: { select: { email: true, firstName: true, lastName: true } },
                 _count: { select: { sessions: true } },
             },
         });
@@ -124,7 +124,7 @@ router.get("/:id", async (req, res) => {
             name: group.name,
             teacherId: group.teacherId,
             teacher: group.teacher.email,
-            teacherName: group.teacher.name,
+            teacherName: [group.teacher.firstName, group.teacher.lastName].filter(Boolean).join(" "),
             sessionCount: group._count.sessions,
             createdAt: group.createdAt,
         });
@@ -161,7 +161,7 @@ router.get("/:id/members", async (req, res) => {
             where: { groupId },
             include: {
                 user: {
-                    select: { id: true, name: true, email: true, role: true },
+                    select: { id: true, firstName: true, lastName: true, email: true, role: true },
                 },
             },
         });
@@ -170,7 +170,7 @@ router.get("/:id/members", async (req, res) => {
         // Параметр includeRemoved зарезервирован под будущий soft delete.
         const result = members.map((m) => ({
             id: m.user.id,
-            name: m.user.name,
+            name: [m.user.firstName, m.user.lastName].filter(Boolean).join(" "),
             email: m.user.email,
             role: m.user.role,
             removed: false,
@@ -183,10 +183,6 @@ router.get("/:id/members", async (req, res) => {
     }
 });
 
-// GET /groups/:id/messages — cursor pagination (infinite scroll)
-// GET /groups/:id/messages — first page
-// GET /groups/:id/messages?cursor=msg_uuid — next 50 older messages
-// ?tab=chat|announcements|qa
 router.get("/:id/messages", async (req, res) => {
     const user = getUser(req);
     const groupId = req.params.id;
@@ -374,9 +370,9 @@ router.post("/:id/invitations", requireRole("TEACHER", "ADMIN"), async (req, res
         const [existingMembers, existingInvitations] = await Promise.all([
             userIds.length > 0
                 ? prisma.groupMember.findMany({
-                      where: { groupId: id, userId: { in: userIds } },
-                      select: { userId: true },
-                  })
+                    where: { groupId: id, userId: { in: userIds } },
+                    select: { userId: true },
+                })
                 : [],
             prisma.invitation.findMany({
                 where: { groupId: id, inviteeEmail: { in: emails }, status: "pending" },

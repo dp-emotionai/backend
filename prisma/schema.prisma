@@ -19,15 +19,22 @@ enum Role {
 model User {
   id           String   @id @default(uuid())
   email        String   @unique
-  password     String
+  password     String?
   role         Role
-  name         String?
+
+  firstName String
+  lastName  String
+  bio       String?
+  phone     String?
+
   status       String   @default("APPROVED")
   organization String?
-  profileUrl   String?
   inviteCode   String?
 
   avatar    Bytes?
+  avatarMimeType String?
+  avatarUpdatedAt DateTime?
+  externalAvatarUrl String?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -50,6 +57,10 @@ model User {
   sessionMessages  SessionMessage[] @relation("SessionMessageSender")
   messageReads     MessageRead[]
   chatMutesCreated ChatMute[] @relation("ChatMuteCreator")
+
+  notificationSettings UserNotificationSettings?
+  preferences          UserPreference?
+  integrations         UserIntegration[]
 }
 
 model RefreshToken {
@@ -406,4 +417,65 @@ model SessionChatPolicy {
   updatedAt DateTime @updatedAt
 
   session Session @relation(fields: [sessionId], references: [id])
+}
+
+model UserNotificationSettings {
+  id String @id @default(uuid())
+
+  userId String @unique
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  emailNotifications Boolean @default(true)
+  pushNotifications  Boolean @default(true)
+  dailyDigestEnabled Boolean @default(false)
+  dailyDigestTime    String?
+
+  quietHoursEnabled Boolean @default(false)
+  quietHoursStart   String?
+  quietHoursEnd     String?
+
+  scheduleNotifications    Boolean @default(true)
+  assignmentNotifications  Boolean @default(true)
+  messageNotifications     Boolean @default(true)
+  groupNotifications       Boolean @default(true)
+  systemNotifications      Boolean @default(true)
+  reportNotifications      Boolean @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model UserPreference {
+  id String @id @default(uuid())
+
+  userId String @unique
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  language            String? @default("ru")
+  region              String?
+  timezone            String?
+  preferredDateFormat String?
+  weekStartsOn        String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model UserIntegration {
+  id String @id @default(uuid())
+
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  provider          String
+  connected         Boolean  @default(false)
+  connectedAt       DateTime?
+  externalAccountId String?
+  metadata          Json?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([userId, provider])
+  @@index([userId])
 }

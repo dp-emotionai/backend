@@ -140,16 +140,17 @@ router.get("/", authMiddleware, async (req, res) => {
                 where: {
                     OR: [
                         { email: { contains: q, mode: "insensitive" } },
-                        { name: { contains: q, mode: "insensitive" } },
+                        { firstName: { contains: q, mode: "insensitive" } },
+                        { lastName: { contains: q, mode: "insensitive" } },
                     ],
                 },
                 take: limit,
                 orderBy: { updatedAt: "desc" },
-                select: { id: true, name: true, email: true, role: true },
+                select: { id: true, firstName: true, lastName: true, email: true, role: true },
             });
             results.users = users.map((u) => ({
                 id: u.id,
-                name: u.name ?? "",
+                name: [u.firstName, u.lastName].filter(Boolean).join(" "),
                 email: u.email,
                 role: u.role,
             }));

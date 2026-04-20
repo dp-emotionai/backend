@@ -17,7 +17,6 @@ const upload = multer({
 
 router.post("/", authMiddleware, upload.single("file"), async (req, res) => {
     try {
-
         const { noteId } = req.body;
 
         if (!req.file) {
@@ -27,7 +26,6 @@ router.post("/", authMiddleware, upload.single("file"), async (req, res) => {
         }
 
         if (noteId) {
-
             const note = await prisma.note.findFirst({
                 where: {
                     id: String(noteId),
@@ -40,7 +38,6 @@ router.post("/", authMiddleware, upload.single("file"), async (req, res) => {
                     message: "Note not found"
                 });
             }
-
         }
 
         const file = req.file;
@@ -62,20 +59,17 @@ router.post("/", authMiddleware, upload.single("file"), async (req, res) => {
                 type: file.mimetype,
                 size: file.size,
                 userId: req.user.id,
-                noteId: noteId ? parseInt(noteId) : null
+                noteId: noteId ? String(noteId) : null
             }
         });
 
         res.json(document);
-
     } catch (error) {
-
         console.error("NOTE UPLOAD ERROR:", error);
 
         res.status(500).json({
             error: "Upload failed"
         });
-
     }
 });
 

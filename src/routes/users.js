@@ -11,6 +11,10 @@ router.get("/:id", authMiddleware, async (req, res) => {
         select: {
             id: true,
             email: true,
+            firstName: true,
+            lastName: true,
+            bio: true,
+            phone: true,
             createdAt: true
         }
     });
@@ -19,7 +23,10 @@ router.get("/:id", authMiddleware, async (req, res) => {
         return res.status(404).json({ message: "User not found" });
     }
 
-    res.json(user);
+    res.json({
+        ...user,
+        fullName: [user.firstName, user.lastName].filter(Boolean).join(" ")
+    });
 });
 
 // обновить пользователя
@@ -32,11 +39,18 @@ router.put("/update", authMiddleware, async (req, res) => {
         select: {
             id: true,
             email: true,
+            firstName: true,
+            lastName: true,
+            bio: true,
+            phone: true,
             createdAt: true
         }
     });
 
-    res.json(updatedUser);
+    res.json({
+        ...updatedUser,
+        fullName: [updatedUser.firstName, updatedUser.lastName].filter(Boolean).join(" ")
+    });
 });
 
 export default router;

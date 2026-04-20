@@ -16,7 +16,8 @@ router.get("/users", async (req, res) => {
             select: {
                 id: true,
                 email: true,
-                name: true,
+                firstName: true,
+                lastName: true,
                 role: true,
                 status: true,
                 organization: true,
@@ -35,7 +36,7 @@ router.get("/users", async (req, res) => {
             users.map((u)=>({
                 id: u.id,
                 email: u.email,
-                name: u.name,
+                name: [u.firstName, u.lastName].filter(Boolean).join(" "),
                 role: u.role === "ADMIN" ? "admin" : u.role === "TEACHER" ? "teacher" : "student",
                 status: u.status,
                 organization: u.organization,

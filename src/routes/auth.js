@@ -323,6 +323,22 @@ const clearVerifyAttempts = (email, purpose, req) => {
     verifyAttempts.delete(key)
 }
 
+const buildFullName = (user) => {
+    return [user?.firstName, user?.lastName].filter(Boolean).join(" ").trim()
+}
+
+const splitFullName = (value) => {
+    const parts = String(value || "").trim().split(/\s+/).filter(Boolean)
+    return {
+        firstName: parts[0] || "Google",
+        lastName: parts.slice(1).join(" ") || "User",
+    }
+}
+
+const formatRoleForClient = (role) => {
+    return role === "ADMIN" ? "admin" : role === "TEACHER" ? "teacher" : "student"
+}
+
 /**
  * Проверка email "на лету"
  */
@@ -383,10 +399,10 @@ router.post("/register", async (req, res) => {
         const {
             email,
             password,
-            name,
+            firstName,
+            lastName,
             role,
             organization,
-            profileUrl,
             inviteCode,
         } = req.body || {}
 
@@ -411,10 +427,18 @@ router.post("/register", async (req, res) => {
             })
         }
 
-        const nameStr = name != null ? String(name).trim() : ""
-        if (!nameStr || nameStr.length < 2) {
+        const firstNameStr = firstName != null ? String(firstName).trim() : ""
+        const lastNameStr = lastName != null ? String(lastName).trim() : ""
+
+        if (!firstNameStr || firstNameStr.length < 2) {
             return res.status(400).json({
-                error: "Имя обязательно"
+                error: "First name is required"
+            })
+        }
+
+        if (!lastNameStr || lastNameStr.length < 2) {
+            return res.status(400).json({
+                error: "Last name is required"
             })
         }
 
@@ -464,10 +488,10 @@ router.post("/register", async (req, res) => {
             message: "Verification code sent",
             email: normalizedEmail,
             meta: {
-                name: nameStr,
+                firstName: firstNameStr,
+                lastName: lastNameStr,
                 role: role ?? "student",
                 organization: organization ? String(organization).trim() : null,
-                profileUrl: profileUrl ? String(profileUrl).trim() : null,
                 inviteCode: inviteCode ? String(inviteCode).trim() : null,
             }
         })
@@ -645,10 +669,10 @@ router.post("/verify-email", async (req, res) => {
             email,
             code,
             password: registerPassword,
-            name,
+            firstName,
+            lastName,
             role,
             organization,
-            profileUrl,
             inviteCode,
         } = req.body || {}
 
@@ -722,10 +746,18 @@ router.post("/verify-email", async (req, res) => {
                 })
             }
 
-            const nameStr = name != null ? String(name).trim() : ""
-            if (!nameStr || nameStr.length < 2) {
+            const firstNameStr = firstName != null ? String(firstName).trim() : ""
+            const lastNameStr = lastName != null ? String(lastName).trim() : ""
+
+            if (!firstNameStr || firstNameStr.length < 2) {
                 return res.status(400).json({
-                    error: "Имя обязательно",
+                    error: "First name is required",
+                })
+            }
+
+            if (!lastNameStr || lastNameStr.length < 2) {
+                return res.status(400).json({
+                    error: "Last name is required",
                 })
             }
 
@@ -740,11 +772,11 @@ router.post("/verify-email", async (req, res) => {
                 data: {
                     email: normalizedEmail,
                     password: passwordHash,
-                    name: nameStr,
+                    firstName: firstNameStr,
+                    lastName: lastNameStr,
                     role: dbRole,
                     status,
                     organization: organization ? String(organization).trim() : null,
-                    profileUrl: profileUrl ? String(profileUrl).trim() : null,
                     inviteCode: inviteCode ? String(inviteCode).trim() : null,
                 },
             })
@@ -814,13 +846,10 @@ router.post("/verify-email", async (req, res) => {
             user: {
                 id: user.id,
                 email: user.email,
-                name: user.name,
-                role:
-                    user.role === "ADMIN"
-                        ? "admin"
-                        : user.role === "TEACHER"
-                            ? "teacher"
-                            : "student",
+                firstName: user.firstName,
+                lastName: user.lastName,
+                fullName: buildFullName(user),
+                role: formatRoleForClient(user.role),
                 status: user.status,
                 createdAt: user.createdAt,
             },
@@ -833,7 +862,7 @@ router.post("/verify-email", async (req, res) => {
 
 router.post("/google", async (req, res) => {
     try {
-        const { credential, role, inviteCode, organization, profileUrl } = req.body || {}
+        const { credential, role, inviteCode, organization } = req.body || {}
 
         if (!credential) {
             return res.status(400).json({
@@ -877,18 +906,19 @@ router.post("/google", async (req, res) => {
                 inviteCode
             )
 
+            const splitName = splitFullName(nameFromGoogle)
+
             user = await prisma.user.create({
                 data: {
                     email,
-                    password: "",
-                    name: nameFromGoogle || "Google User",
+                    password: null,
+                    firstName: splitName.firstName,
+                    lastName: splitName.lastName,
                     role: dbRole,
                     status,
                     organization: organization ? String(organization).trim() : null,
-                    profileUrl: profileUrl
-                        ? String(profileUrl).trim()
-                        : avatarFromGoogle || null,
                     inviteCode: inviteCode ? String(inviteCode).trim() : null,
+                    externalAvatarUrl: avatarFromGoogle || null,
                 },
             })
 
@@ -960,13 +990,10 @@ router.post("/google", async (req, res) => {
             user: {
                 id: user.id,
                 email: user.email,
-                name: user.name,
-                role:
-                    user.role === "ADMIN"
-                        ? "admin"
-                        : user.role === "TEACHER"
-                            ? "teacher"
-                            : "student",
+                firstName: user.firstName,
+                lastName: user.lastName,
+                fullName: buildFullName(user),
+                role: formatRoleForClient(user.role),
                 status: user.status,
                 createdAt: user.createdAt
             },
@@ -1081,8 +1108,10 @@ router.post("/login", async (req, res) => {
             user: {
                 id: user.id,
                 email: user.email,
-                name: user.name,
-                role: user.role === "ADMIN" ? "admin" : user.role === "TEACHER" ? "teacher" : "student",
+                firstName: user.firstName,
+                lastName: user.lastName,
+                fullName: buildFullName(user),
+                role: formatRoleForClient(user.role),
                 status: user.status,
                 createdAt: user.createdAt
             },
@@ -1384,25 +1413,77 @@ router.get("/me", authMiddleware, async (req, res) => {
         select: {
             id: true,
             email: true,
-            name: true,
+            firstName: true,
+            lastName: true,
+            bio: true,
+            phone: true,
             role: true,
             status: true,
+            organization: true,
+            externalAvatarUrl: true,
+            avatarUpdatedAt: true,
             createdAt: true,
-            updatedAt: true
+            updatedAt: true,
+            notificationSettings: true,
+            preferences: true,
+            integrations: {
+                select: {
+                    id: true,
+                    provider: true,
+                    connected: true,
+                    connectedAt: true,
+                    externalAccountId: true,
+                    metadata: true,
+                    createdAt: true,
+                    updatedAt: true
+                }
+            }
         }
     })
 
     if (!user) return res.status(404).json({ message: "User not found" })
 
-    res.json(user)
+    res.json({
+        ...user,
+        fullName: buildFullName(user),
+        avatarUrl: user.avatarUpdatedAt ? "/auth/avatar" : user.externalAvatarUrl,
+        notificationSettings: user.notificationSettings,
+        preferences: user.preferences,
+        integrations: user.integrations
+    })
 })
 
 router.put("/me", authMiddleware, async (req, res) => {
     try {
-        const { name } = req.body || {}
+        const {
+            firstName,
+            lastName,
+            bio,
+            phone,
+            organization
+        } = req.body || {}
+
         const data = {}
 
-        if (name !== undefined) data.name = String(name).trim() || null
+        if (firstName !== undefined) {
+            const value = String(firstName).trim()
+            if (!value || value.length < 2) {
+                return res.status(400).json({ message: "First name is required" })
+            }
+            data.firstName = value
+        }
+
+        if (lastName !== undefined) {
+            const value = String(lastName).trim()
+            if (!value || value.length < 2) {
+                return res.status(400).json({ message: "Last name is required" })
+            }
+            data.lastName = value
+        }
+
+        if (bio !== undefined) data.bio = String(bio).trim() || null
+        if (phone !== undefined) data.phone = String(phone).trim() || null
+        if (organization !== undefined) data.organization = String(organization).trim() || null
 
         if (Object.keys(data).length === 0) {
             return res.status(400).json({ message: "No fields to update" })
@@ -1411,10 +1492,28 @@ router.put("/me", authMiddleware, async (req, res) => {
         const user = await prisma.user.update({
             where: { id: req.user.id },
             data,
-            select: { id: true, email: true, name: true, role: true, createdAt: true }
+            select: {
+                id: true,
+                email: true,
+                firstName: true,
+                lastName: true,
+                bio: true,
+                phone: true,
+                role: true,
+                status: true,
+                organization: true,
+                externalAvatarUrl: true,
+                avatarUpdatedAt: true,
+                createdAt: true,
+                updatedAt: true
+            }
         })
 
-        res.json(user)
+        res.json({
+            ...user,
+            fullName: buildFullName(user),
+            avatarUrl: user.avatarUpdatedAt ? "/auth/avatar" : user.externalAvatarUrl
+        })
     } catch (e) {
         console.error("PUT /me", e)
         res.status(500).json({ message: "Update failed" })
@@ -1423,9 +1522,10 @@ router.put("/me", authMiddleware, async (req, res) => {
 
 router.put("/change-password", authMiddleware, async (req, res) => {
     try {
-        const { currentPassword, newPassword } = req.body || {}
+        const { currentPassword, oldPassword, newPassword } = req.body || {}
+        const currentPasswordValue = currentPassword || oldPassword
 
-        if (!currentPassword || !newPassword) {
+        if (!currentPasswordValue || !newPassword) {
             return res.status(400).json({ message: "currentPassword and newPassword required" })
         }
 
@@ -1443,7 +1543,7 @@ router.put("/change-password", authMiddleware, async (req, res) => {
             })
         }
 
-        const valid = await bcrypt.compare(currentPassword, user.password)
+        const valid = await bcrypt.compare(currentPasswordValue, user.password)
         if (!valid) return res.status(401).json({ message: "Current password is wrong" })
 
         const hashed = await bcrypt.hash(newPasswordStr, 10)
@@ -1465,9 +1565,10 @@ router.put("/change-password", authMiddleware, async (req, res) => {
  */
 router.post("/change-email/request", authMiddleware, async (req, res) => {
     try {
-        const { password, newEmail } = req.body || {}
+        const { password, currentPassword, newEmail } = req.body || {}
+        const passwordValue = password || currentPassword
 
-        if (!password || !newEmail) {
+        if (!passwordValue || !newEmail) {
             return res.status(400).json({ message: "password and newEmail required" })
         }
 
@@ -1485,13 +1586,17 @@ router.post("/change-email/request", authMiddleware, async (req, res) => {
         const user = await prisma.user.findUnique({ where: { id: req.user.id } })
         if (!user) return res.status(404).json({ message: "User not found" })
 
+        if (user.email === normalized) {
+            return res.status(400).json({ message: "New email must be different from current email" })
+        }
+
         if (!user.password || user.password === "") {
             return res.status(400).json({
                 message: "No password set. Use “Forgot password” first, then you can change email.",
             })
         }
 
-        const valid = await bcrypt.compare(password, user.password)
+        const valid = await bcrypt.compare(passwordValue, user.password)
         if (!valid) return res.status(401).json({ message: "Password is wrong" })
 
         const existing = await prisma.user.findUnique({ where: { email: normalized } })
@@ -1596,6 +1701,12 @@ router.delete("/delete-account", authMiddleware, async (req, res) => {
         const user = await prisma.user.findUnique({ where: { id: req.user.id } })
         if (!user) return res.status(404).json({ message: "User not found" })
 
+        if (!user.password || user.password === "") {
+            return res.status(400).json({
+                message: "No password set for this account"
+            })
+        }
+
         const valid = await bcrypt.compare(password, user.password)
         if (!valid) return res.status(401).json({ message: "Password is wrong" })
 
@@ -1617,7 +1728,11 @@ router.post("/avatar", authMiddleware, upload.single("avatar"), async (req, res)
 
         await prisma.user.update({
             where: { id: req.user.id },
-            data: { avatar: req.file.buffer }
+            data: {
+                avatar: req.file.buffer,
+                avatarMimeType: req.file.mimetype || "application/octet-stream",
+                avatarUpdatedAt: new Date()
+            }
         })
 
         res.json({ message: "Avatar updated" })
@@ -1631,12 +1746,12 @@ router.get("/avatar", authMiddleware, async (req, res) => {
     try {
         const user = await prisma.user.findUnique({
             where: { id: req.user.id },
-            select: { avatar: true }
+            select: { avatar: true, avatarMimeType: true }
         })
 
         if (!user || !user.avatar) return res.status(404).json({ message: "No avatar" })
 
-        res.set("Content-Type", "image/jpeg")
+        res.set("Content-Type", user.avatarMimeType || "application/octet-stream")
         res.send(user.avatar)
     } catch (e) {
         console.error("GET /avatar", e)
@@ -1659,6 +1774,8 @@ router.post("/logout-all", authMiddleware, async (req, res) => {
 router.get("/sessions", authMiddleware, async (req, res) => {
     await cleanupExpiredTokens()
 
+    const currentRefreshToken = req.cookies?.refreshToken || null
+
     const sessions = await prisma.refreshToken.findMany({
         where: { userId: req.user.id },
         orderBy: { createdAt: "desc" },
@@ -1667,6 +1784,7 @@ router.get("/sessions", authMiddleware, async (req, res) => {
 
     const formatted = sessions.map((session) => ({
         ...session,
+        isCurrent: currentRefreshToken === session.token,
         createdAtFormatted: formatDate(session.createdAt),
         lastUsedAtFormatted: formatDate(session.lastUsedAt),
         expiresAtFormatted: formatDate(session.expiresAt)

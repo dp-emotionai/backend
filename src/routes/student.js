@@ -54,7 +54,7 @@ router.get("/sessions/upcoming", async (req, res) => {
                 status: { in: ["draft", "active"] },
                 OR: [{ startedAt: null }, { startedAt: { gt: now } }],
             },
-            include: { group: true, teacher: { select: { id: true, name: true, email: true } } },
+            include: { group: true, teacher: { select: { id: true, firstName: true, lastName: true, email: true } } },
             orderBy: { createdAt: "asc" },
         });
 
@@ -65,7 +65,7 @@ router.get("/sessions/upcoming", async (req, res) => {
             startTime: (s.startedAt || s.createdAt).toISOString(),
             endTime: s.endedAt?.toISOString() ?? null,
             instructorId: s.teacher.id,
-            instructorName: s.teacher.name ?? s.teacher.email,
+            instructorName: [s.teacher.firstName, s.teacher.lastName].filter(Boolean).join(" ") || s.teacher.email,
             room: s.group.name,
             isOnline: true,
             status: s.status === "active" ? "active" : "scheduled",
@@ -94,7 +94,7 @@ router.get("/sessions/current", async (req, res) => {
                 groupId: { in: groupIds },
                 status: "active",
             },
-            include: { group: true, teacher: { select: { id: true, name: true, email: true } } },
+            include: { group: true, teacher: { select: { id: true, firstName: true, lastName: true, email: true } } },
         });
 
         if (!session) {
@@ -108,7 +108,7 @@ router.get("/sessions/current", async (req, res) => {
             startTime: (session.startedAt || session.createdAt).toISOString(),
             endTime: session.endedAt?.toISOString() ?? null,
             instructorId: session.teacher.id,
-            instructorName: session.teacher.name ?? session.teacher.email,
+            instructorName: [session.teacher.firstName, session.teacher.lastName].filter(Boolean).join(" ") || session.teacher.email,
             room: session.group.name,
             isOnline: true,
             status: "active",
@@ -139,7 +139,7 @@ router.get("/sessions/history", async (req, res) => {
         const [sessions, total] = await Promise.all([
             prisma.session.findMany({
                 where: { groupId: { in: groupIds }, status: "finished" },
-                include: { group: true, teacher: { select: { id: true, name: true, email: true } } },
+                include: { group: true, teacher: { select: { id: true, firstName: true, lastName: true, email: true } } },
                 orderBy: { endedAt: "desc" },
                 skip,
                 take: limit,
@@ -156,7 +156,7 @@ router.get("/sessions/history", async (req, res) => {
             startTime: (s.startedAt || s.createdAt).toISOString(),
             endTime: s.endedAt?.toISOString() ?? null,
             instructorId: s.teacher.id,
-            instructorName: s.teacher.name ?? s.teacher.email,
+            instructorName: [s.teacher.firstName, s.teacher.lastName].filter(Boolean).join(" ") || s.teacher.email,
             room: s.group.name,
             isOnline: false,
             status: "completed",
@@ -411,12 +411,12 @@ router.get("/me/emotions-summary", async (req, res) => {
         const thisWeek =
             thisWeekSamples.length
                 ? 1 -
-                  thisWeekSamples.reduce((sum, s) => sum + (s.risk ?? 0), 0) / thisWeekSamples.length
+                thisWeekSamples.reduce((sum, s) => sum + (s.risk ?? 0), 0) / thisWeekSamples.length
                 : 0;
         const prevWeek =
             prevWeekSamples.length
                 ? 1 -
-                  prevWeekSamples.reduce((sum, s) => sum + (s.risk ?? 0), 0) / prevWeekSamples.length
+                prevWeekSamples.reduce((sum, s) => sum + (s.risk ?? 0), 0) / prevWeekSamples.length
                 : 0;
 
         const emotionsCount = new Map();

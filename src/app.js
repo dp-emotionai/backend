@@ -19,6 +19,7 @@ import searchRoutes from "./routes/search.js"
 import studentRoutes from "./routes/student.js"
 import teacherRoutes from "./routes/teacher.js"
 import adminRoutes from "./routes/admin.js"
+import userSettingsRoutes from "./routes/userSettings.js";
 
 const app = express()
 
@@ -59,6 +60,7 @@ app.use("/api/search", searchRoutes)
 app.use("/api/student", studentRoutes)
 app.use("/api/teacher", teacherRoutes)
 app.use("/api/admin", adminRoutes)
+app.use("/api/user", userSettingsRoutes);
 
 app.use("/notes/upload", noteUploadRoutes)
 

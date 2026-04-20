@@ -16,16 +16,12 @@ export default async function authMiddleware(req,res,next){
         let decoded
 
         try{
-
             decoded = jwt.verify(token,process.env.JWT_SECRET)
-
         }catch(err){
-
             if(err.name === "TokenExpiredError")
                 return res.status(401).json({error:"Token expired"})
 
             return res.status(401).json({error:"Invalid token"})
-
         }
 
         if(!decoded?.sub)
@@ -37,7 +33,8 @@ export default async function authMiddleware(req,res,next){
                 id:true,
                 email:true,
                 role:true,
-                name:true,
+                firstName:true,
+                lastName:true,
                 status:true
             }
         })
@@ -49,13 +46,19 @@ export default async function authMiddleware(req,res,next){
         if(user.status === "PENDING")
             return res.status(403).json({error:"Account is awaiting admin approval"})
 
+        const fullName =
+            [user.firstName, user.lastName].filter(Boolean).join(" ") || null
+
         req.user = {
             id: user.id,
             userId: user.id,
             email: user.email,
             role: user.role,
-            name: user.name,
+            firstName: user.firstName,
+            lastName: user.lastName,
+            fullName
         }
+
         req.userId = user.id
 
         next()
