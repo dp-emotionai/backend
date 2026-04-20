@@ -1,8 +1,10 @@
 import path from "path";
 import fs from "fs";
 import dotenv from "dotenv";
-import { PrismaClient } from "@prisma/client";
+import pkg from "@prisma/client";
 import bcrypt from "bcrypt";
+
+const { PrismaClient } = pkg;
 
 const SALT_ROUNDS = 10;
 

@@ -4,6 +4,7 @@ import jwt from "jsonwebtoken"
 import fetch from "node-fetch"
 import multer from "multer"
 import crypto from "crypto"
+import dns from "dns/promises"
 import prisma from "../utils/prisma.js"
 import authMiddleware from "../middleware/authMiddleware.js"
 import {
@@ -21,6 +22,13 @@ const upload = multer({
     storage,
     limits: { fileSize: 2 * 1024 * 1024 }
 })
+
+const EMAIL_CODE_TTL_MINUTES = 10
+const EMAIL_CODE_COOLDOWN_MS = 60 * 1000
+const EMAIL_CODE_HOURLY_LIMIT = 5
+const EMAIL_CODE_MAX_VERIFY_ATTEMPTS = 5
+
+const verifyAttempts = new Map()
 
 const generateAccessToken = (userId, role) => {
     return jwt.sign(
@@ -88,7 +96,9 @@ const getLocationFromIP = async (req) => {
         const geo = await fetch(`https://ipapi.co/${ip}/json/`)
         const geoData = await geo.json()
 
-        const location = `${geoData?.country_name ?? "Unknown"}, ${geoData?.city ?? ""}`
+        const countryName = geoData?.["country_name"] ?? "Unknown"
+        const city = geoData?.city ?? ""
+        const location = `${countryName}, ${city}`
 
         ipLocationCache.set(ip, {
             location,
@@ -161,6 +171,210 @@ const getClientIp = (req) => {
     )
 }
 
+const isValidEmailFormat = (email) => {
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
+    return emailRegex.test(email)
+}
+
+const checkEmailDomain = async (email) => {
+    const domain = email.split("@")[1]
+
+    if (!domain) {
+        return {
+            ok: false,
+            status: "invalid_format",
+            message: "Неверный формат email",
+        }
+    }
+
+    try {
+        const mxRecords = await dns.resolveMx(domain)
+
+        if (!mxRecords || mxRecords.length === 0) {
+            return {
+                ok: false,
+                status: "domain_not_found",
+                message: "Домен не принимает почту",
+            }
+        }
+
+        return {
+            ok: true,
+            status: "ok",
+            message: "Email выглядит валидным",
+        }
+    } catch {
+        return {
+            ok: false,
+            status: "domain_not_found",
+            message: "Такого почтового домена нет",
+        }
+    }
+}
+
+const cleanupEmailCodes = async () => {
+    const oneDayAgo = new Date(Date.now() - 24 * 60 * 60 * 1000)
+
+    await prisma.emailCode.deleteMany({
+        where: {
+            OR: [
+                { expiresAt: { lt: oneDayAgo } },
+                { consumedAt: { not: null } }
+            ]
+        }
+    })
+}
+
+const ensureEmailSendAllowed = async (email, purpose) => {
+    const latest = await prisma.emailCode.findFirst({
+        where: { email, purpose },
+        orderBy: { createdAt: "desc" }
+    })
+
+    if (latest) {
+        const diff = Date.now() - new Date(latest.createdAt).getTime()
+        if (diff < EMAIL_CODE_COOLDOWN_MS) {
+            const waitSec = Math.ceil((EMAIL_CODE_COOLDOWN_MS - diff) / 1000)
+            return {
+                ok: false,
+                statusCode: 429,
+                message: `Подождите ${waitSec} сек. перед повторной отправкой кода`
+            }
+        }
+    }
+
+    const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000)
+
+    const sentLastHour = await prisma.emailCode.count({
+        where: {
+            email,
+            purpose,
+            createdAt: { gte: oneHourAgo }
+        }
+    })
+
+    if (sentLastHour >= EMAIL_CODE_HOURLY_LIMIT) {
+        return {
+            ok: false,
+            statusCode: 429,
+            message: "Слишком много запросов кода. Попробуйте позже"
+        }
+    }
+
+    return { ok: true }
+}
+
+const createAndSendEmailCode = async ({ email, purpose }) => {
+    const code = generateEmailCode()
+    const expiresAt = new Date(Date.now() + EMAIL_CODE_TTL_MINUTES * 60 * 1000)
+
+    await prisma.emailCode.updateMany({
+        where: {
+            email,
+            purpose,
+            consumedAt: null
+        },
+        data: {
+            consumedAt: new Date()
+        }
+    })
+
+    await prisma.emailCode.create({
+        data: {
+            email,
+            code,
+            purpose,
+            expiresAt
+        }
+    })
+
+    await sendEmailVerificationCode(email, code)
+
+    return { code, expiresAt }
+}
+
+const getVerifyAttemptsKey = (email, purpose, req) => {
+    return `${purpose}:${email}:${getClientIp(req)}`
+}
+
+const consumeVerifyAttempt = (email, purpose, req) => {
+    const key = getVerifyAttemptsKey(email, purpose, req)
+    const now = Date.now()
+    const record = verifyAttempts.get(key)
+
+    if (!record || record.expiresAt < now) {
+        verifyAttempts.set(key, {
+            count: 1,
+            expiresAt: now + EMAIL_CODE_TTL_MINUTES * 60 * 1000
+        })
+        return 1
+    }
+
+    record.count += 1
+    verifyAttempts.set(key, record)
+    return record.count
+}
+
+const clearVerifyAttempts = (email, purpose, req) => {
+    const key = getVerifyAttemptsKey(email, purpose, req)
+    verifyAttempts.delete(key)
+}
+
+/**
+ * Проверка email "на лету"
+ */
+router.post("/check-email", async (req, res) => {
+    try {
+        const { email } = req.body || {}
+
+        if (!email) {
+            return res.status(400).json({
+                status: "error",
+                message: "Email обязателен",
+            })
+        }
+
+        const normalizedEmail = String(email).trim().toLowerCase()
+
+        if (!isValidEmailFormat(normalizedEmail)) {
+            return res.json({
+                status: "invalid_format",
+                message: "Неверный формат email",
+            })
+        }
+
+        const domainCheck = await checkEmailDomain(normalizedEmail)
+        if (!domainCheck.ok) {
+            return res.json(domainCheck)
+        }
+
+        const existingUser = await prisma.user.findUnique({
+            where: { email: normalizedEmail },
+        })
+
+        if (existingUser) {
+            return res.json({
+                status: "already_registered",
+                message: "Пользователь с таким email уже существует",
+            })
+        }
+
+        return res.json({
+            status: "ok",
+            message: "Email можно использовать",
+        })
+    } catch (error) {
+        console.error("CHECK-EMAIL ERROR:", error)
+        return res.status(500).json({
+            status: "error",
+            message: "Ошибка сервера",
+        })
+    }
+})
+
+/**
+ * Регистрация: отправка кода
+ */
 router.post("/register", async (req, res) => {
     try {
         const {
@@ -175,7 +389,15 @@ router.post("/register", async (req, res) => {
 
         if (!email) {
             return res.status(400).json({
-                error: "Email и пароль обязательны"
+                error: "Email обязателен"
+            })
+        }
+
+        const normalizedEmail = String(email).trim().toLowerCase()
+
+        if (!isValidEmailFormat(normalizedEmail)) {
+            return res.status(400).json({
+                error: "Неверный формат email"
             })
         }
 
@@ -193,7 +415,12 @@ router.post("/register", async (req, res) => {
             })
         }
 
-        const normalizedEmail = String(email).trim().toLowerCase()
+        const domainCheck = await checkEmailDomain(normalizedEmail)
+        if (!domainCheck.ok) {
+            return res.status(400).json({
+                error: domainCheck.message
+            })
+        }
 
         const existingUser = await prisma.user.findUnique({
             where: { email: normalizedEmail }
@@ -205,48 +432,122 @@ router.post("/register", async (req, res) => {
             })
         }
 
-        const code = generateEmailCode()
-        const expiresAt = new Date(Date.now() + 10 * 60 * 1000)
+        const sendAllowed = await ensureEmailSendAllowed(normalizedEmail, "register")
+        if (!sendAllowed.ok) {
+            return res.status(sendAllowed.statusCode).json({
+                error: sendAllowed.message
+            })
+        }
 
-        await prisma.emailCode.updateMany({
-            where: {
+        await cleanupEmailCodes()
+
+        try {
+            await createAndSendEmailCode({
                 email: normalizedEmail,
-                purpose: "register",
-                consumedAt: null
-            },
-            data: {
-                consumedAt: new Date()
-            }
-        })
-
-        await prisma.emailCode.create({
-            data: {
-                email: normalizedEmail,
-                code,
-                purpose: "register",
-                expiresAt
-            }
-        })
-
-        res.status(201).json({
-            message: "Verification code sent"
-        })
-
-        sendEmailVerificationCode(normalizedEmail, code).catch((error) => {
+                purpose: "register"
+            })
+        } catch (error) {
             console.error("REGISTER EMAIL SEND ERROR:", {
                 email: normalizedEmail,
                 error: error?.message || error
             })
+
+            return res.status(400).json({
+                error: "Не удалось отправить код на этот email"
+            })
+        }
+
+        return res.status(201).json({
+            message: "Verification code sent",
+            email: normalizedEmail,
+            meta: {
+                name: nameStr,
+                role: role ?? "student",
+                organization: organization ? String(organization).trim() : null,
+                profileUrl: profileUrl ? String(profileUrl).trim() : null,
+                inviteCode: inviteCode ? String(inviteCode).trim() : null,
+            }
         })
     } catch (error) {
         console.error("REGISTER ERROR:", error)
 
-        res.status(500).json({
+        return res.status(500).json({
             error: "Something went wrong"
         })
     }
 })
 
+/**
+ * Повторная отправка кода регистрации
+ */
+router.post("/resend-register-code", async (req, res) => {
+    try {
+        const { email } = req.body || {}
+
+        if (!email) {
+            return res.status(400).json({ error: "Email обязателен" })
+        }
+
+        const normalizedEmail = String(email).trim().toLowerCase()
+
+        if (!isValidEmailFormat(normalizedEmail)) {
+            return res.status(400).json({ error: "Неверный формат email" })
+        }
+
+        const existingUser = await prisma.user.findUnique({
+            where: { email: normalizedEmail }
+        })
+
+        if (existingUser) {
+            return res.status(400).json({
+                error: "Пользователь с таким email уже существует"
+            })
+        }
+
+        const domainCheck = await checkEmailDomain(normalizedEmail)
+        if (!domainCheck.ok) {
+            return res.status(400).json({
+                error: domainCheck.message
+            })
+        }
+
+        const sendAllowed = await ensureEmailSendAllowed(normalizedEmail, "register")
+        if (!sendAllowed.ok) {
+            return res.status(sendAllowed.statusCode).json({
+                error: sendAllowed.message
+            })
+        }
+
+        await cleanupEmailCodes()
+
+        try {
+            await createAndSendEmailCode({
+                email: normalizedEmail,
+                purpose: "register"
+            })
+        } catch (error) {
+            console.error("RESEND REGISTER CODE ERROR:", {
+                email: normalizedEmail,
+                error: error?.message || error
+            })
+
+            return res.status(400).json({
+                error: "Не удалось отправить код на этот email"
+            })
+        }
+
+        return res.json({
+            message: "Verification code resent"
+        })
+    } catch (e) {
+        console.error("RESEND-REGISTER-CODE ERROR", e)
+        return res.status(500).json({ error: "Something went wrong" })
+    }
+})
+
+/**
+ * Код для логина или смены email
+ */
 router.post("/request-code", async (req, res) => {
     try {
         const {
@@ -259,46 +560,82 @@ router.post("/request-code", async (req, res) => {
         }
 
         const normalizedEmail = String(email).trim().toLowerCase()
-        const now = new Date()
-        const code = generateEmailCode()
-        const expiresAt = new Date(now.getTime() + 10 * 60 * 1000)
+        const finalPurpose = String(purpose || "login").trim()
 
-        await prisma.emailCode.updateMany({
-            where: {
-                email: normalizedEmail,
-                purpose: purpose || "login",
-                consumedAt: null
-            },
-            data: {
-                consumedAt: new Date()
+        if (!isValidEmailFormat(normalizedEmail)) {
+            return res.status(400).json({ error: "Неверный формат email" })
+        }
+
+        const domainCheck = await checkEmailDomain(normalizedEmail)
+        if (!domainCheck.ok) {
+            return res.status(400).json({ error: domainCheck.message })
+        }
+
+        if (finalPurpose === "login") {
+            const user = await prisma.user.findUnique({
+                where: { email: normalizedEmail }
+            })
+
+            if (!user) {
+                return res.status(400).json({
+                    error: "Пользователь с таким email не найден"
+                })
             }
-        })
+        }
 
-        await prisma.emailCode.create({
-            data: {
-                email: normalizedEmail,
-                code,
-                purpose: purpose || "login",
-                expiresAt
+        if (finalPurpose === "change_email") {
+            const existingUser = await prisma.user.findUnique({
+                where: { email: normalizedEmail }
+            })
+
+            if (existingUser) {
+                return res.status(409).json({
+                    error: "Email already in use"
+                })
             }
-        })
+        }
 
-        res.json({
-            message: "Verification code sent"
-        })
+        const sendAllowed = await ensureEmailSendAllowed(normalizedEmail, finalPurpose)
+        if (!sendAllowed.ok) {
+            return res.status(sendAllowed.statusCode).json({
+                error: sendAllowed.message
+            })
+        }
 
-        sendEmailVerificationCode(normalizedEmail, code).catch((e) => {
+        await cleanupEmailCodes()
+
+        try {
+            await createAndSendEmailCode({
+                email: normalizedEmail,
+                purpose: finalPurpose
+            })
+        } catch (e) {
             console.error("REQUEST-CODE EMAIL SEND ERROR:", {
                 email: normalizedEmail,
+                purpose: finalPurpose,
                 error: e?.message || e
             })
+
+            return res.status(400).json({
+                error: "Не удалось отправить код на этот email"
+            })
+        }
+
+        return res.json({
+            message: "Verification code sent"
         })
     } catch (e) {
         console.error("REQUEST-CODE ERROR", e)
-        res.status(500).json({ error: "Something went wrong" })
+        return res.status(500).json({ error: "Something went wrong" })
     }
 })
 
+/**
+ * Подтверждение email
+ * register -> создает юзера
+ * login -> логинит
+ * change_email -> меняет email
+ */
 router.post("/verify-email", async (req, res) => {
     try {
         const {
@@ -318,6 +655,25 @@ router.post("/verify-email", async (req, res) => {
 
         const normalizedEmail = String(email).trim().toLowerCase()
         const codeStr = String(code).trim()
+
+        const candidateRecord = await prisma.emailCode.findFirst({
+            where: {
+                email: normalizedEmail,
+                code: codeStr,
+                consumedAt: null,
+                expiresAt: { gt: new Date() },
+            },
+            orderBy: { createdAt: "desc" },
+        })
+
+        const purpose = candidateRecord?.purpose || "register"
+
+        const attempts = consumeVerifyAttempt(normalizedEmail, purpose, req)
+        if (attempts > EMAIL_CODE_MAX_VERIFY_ATTEMPTS) {
+            return res.status(429).json({
+                error: "Слишком много неверных попыток. Запросите новый код"
+            })
+        }
 
         const record = await prisma.emailCode.findFirst({
             where: {
@@ -347,6 +703,12 @@ router.post("/verify-email", async (req, res) => {
             return res.status(400).json({ error: "Пользователь с таким email уже существует" })
         }
 
+        if (mode === "change_email") {
+            return res.status(400).json({
+                error: "Для смены email используйте /change-email/confirm"
+            })
+        }
+
         if (!user && mode === "register") {
             const rawPassword =
                 registerPassword != null ? String(registerPassword).trim() : ""
@@ -358,7 +720,11 @@ router.post("/verify-email", async (req, res) => {
             }
 
             const nameStr = name != null ? String(name).trim() : ""
-            const finalName = nameStr.length >= 2 ? nameStr : "User"
+            if (!nameStr || nameStr.length < 2) {
+                return res.status(400).json({
+                    error: "Имя обязательно",
+                })
+            }
 
             const passwordHash = await bcrypt.hash(rawPassword, 10)
             const { dbRole, status } = computeRoleAndStatus(
@@ -371,7 +737,7 @@ router.post("/verify-email", async (req, res) => {
                 data: {
                     email: normalizedEmail,
                     password: passwordHash,
-                    name: finalName,
+                    name: nameStr,
                     role: dbRole,
                     status,
                     organization: organization ? String(organization).trim() : null,
@@ -409,6 +775,8 @@ router.post("/verify-email", async (req, res) => {
             where: { id: record.id },
             data: { consumedAt: new Date() },
         })
+
+        clearVerifyAttempts(normalizedEmail, mode, req)
 
         const accessToken = generateAccessToken(user.id, user.role)
         const refreshToken = generateRefreshToken(user.id)
@@ -455,7 +823,7 @@ router.post("/verify-email", async (req, res) => {
             },
         })
     } catch (e) {
-        console.error("VERIFY-CODE ERROR", e)
+        console.error("VERIFY-EMAIL ERROR", e)
         return res.status(500).json({ error: "Server error" })
     }
 })
@@ -938,7 +1306,10 @@ router.put("/change-password", authMiddleware, async (req, res) => {
     }
 })
 
-router.put("/change-email", authMiddleware, async (req, res) => {
+/**
+ * Запрос кода для смены email
+ */
+router.post("/change-email/request", authMiddleware, async (req, res) => {
     try {
         const { password, newEmail } = req.body || {}
 
@@ -947,6 +1318,15 @@ router.put("/change-email", authMiddleware, async (req, res) => {
         }
 
         const normalized = String(newEmail).trim().toLowerCase()
+
+        if (!isValidEmailFormat(normalized)) {
+            return res.status(400).json({ message: "Invalid email format" })
+        }
+
+        const domainCheck = await checkEmailDomain(normalized)
+        if (!domainCheck.ok) {
+            return res.status(400).json({ message: domainCheck.message })
+        }
 
         const user = await prisma.user.findUnique({ where: { id: req.user.id } })
         if (!user) return res.status(404).json({ message: "User not found" })
@@ -963,16 +1343,94 @@ router.put("/change-email", authMiddleware, async (req, res) => {
         const existing = await prisma.user.findUnique({ where: { email: normalized } })
         if (existing) return res.status(409).json({ message: "Email already in use" })
 
+        const sendAllowed = await ensureEmailSendAllowed(normalized, "change_email")
+        if (!sendAllowed.ok) {
+            return res.status(sendAllowed.statusCode).json({ message: sendAllowed.message })
+        }
+
+        await cleanupEmailCodes()
+
+        await createAndSendEmailCode({
+            email: normalized,
+            purpose: "change_email"
+        })
+
+        return res.json({
+            message: "Verification code sent to new email",
+            newEmail: normalized
+        })
+    } catch (e) {
+        console.error("POST /change-email/request", e)
+        res.status(500).json({ message: "Change email request failed" })
+    }
+})
+
+/**
+ * Подтверждение смены email
+ */
+router.post("/change-email/confirm", authMiddleware, async (req, res) => {
+    try {
+        const { newEmail, code } = req.body || {}
+
+        if (!newEmail || !code) {
+            return res.status(400).json({ message: "newEmail and code required" })
+        }
+
+        const normalized = String(newEmail).trim().toLowerCase()
+        const codeStr = String(code).trim()
+
+        const attempts = consumeVerifyAttempt(normalized, "change_email", req)
+        if (attempts > EMAIL_CODE_MAX_VERIFY_ATTEMPTS) {
+            return res.status(429).json({
+                message: "Too many invalid attempts. Request a new code"
+            })
+        }
+
+        const existing = await prisma.user.findUnique({ where: { email: normalized } })
+        if (existing) return res.status(409).json({ message: "Email already in use" })
+
+        const record = await prisma.emailCode.findFirst({
+            where: {
+                email: normalized,
+                code: codeStr,
+                purpose: "change_email",
+                consumedAt: null,
+                expiresAt: { gt: new Date() }
+            },
+            orderBy: { createdAt: "desc" }
+        })
+
+        if (!record) {
+            return res.status(401).json({ message: "Invalid email or code" })
+        }
+
         await prisma.user.update({
             where: { id: req.user.id },
             data: { email: normalized }
         })
 
+        await prisma.emailCode.update({
+            where: { id: record.id },
+            data: { consumedAt: new Date() }
+        })
+
+        clearVerifyAttempts(normalized, "change_email", req)
+
         res.json({ message: "Email updated", email: normalized })
     } catch (e) {
-        console.error("PUT /change-email", e)
+        console.error("POST /change-email/confirm", e)
         res.status(500).json({ message: "Change email failed" })
     }
+})
+
+/**
+ * Старый route оставил для совместимости,
+ * но лучше фронт перевести на /change-email/request + /change-email/confirm
+ */
+router.put("/change-email", authMiddleware, async (req, res) => {
+    return res.status(400).json({
+        message: "Use /change-email/request and /change-email/confirm"
+    })
 })
 
 router.delete("/delete-account", authMiddleware, async (req, res) => {
