@@ -55,6 +55,7 @@ model User {
 
   groupMessages    GroupMessage[]   @relation("GroupMessageSender")
   sessionMessages  SessionMessage[] @relation("SessionMessageSender")
+  sessionNotes SessionNote[]
   messageReads     MessageRead[]
   chatMutesCreated ChatMute[] @relation("ChatMuteCreator")
 
@@ -197,6 +198,7 @@ model Session {
 
   messages   SessionMessage[]
   chatPolicy SessionChatPolicy?
+  notes SessionNote[]
 
   emotionSamples SessionEmotionSample[]
   summary        SessionSummary?
@@ -417,6 +419,25 @@ model SessionChatPolicy {
   updatedAt DateTime @updatedAt
 
   session Session @relation(fields: [sessionId], references: [id])
+}
+
+model SessionNote {
+  id        String   @id @default(uuid())
+
+  sessionId String
+  userId    String
+
+  text      String
+  pinned    Boolean  @default(false)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  session Session @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([sessionId, createdAt])
+  @@index([userId])
 }
 
 model UserNotificationSettings {
