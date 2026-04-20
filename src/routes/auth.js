@@ -7,6 +7,8 @@ import crypto from "crypto"
 import dns from "dns/promises"
 import prisma from "../utils/prisma.js"
 import authMiddleware from "../middleware/authMiddleware.js"
+import { OAuth2Client } from "google-auth-library"
+
 import {
     sendNewRegistrationAdminEmail,
     sendEmailVerificationCode,
@@ -23,6 +25,7 @@ const upload = multer({
     limits: { fileSize: 2 * 1024 * 1024 }
 })
 
+const googleClient = new OAuth2Client(process.env.GOOGLE_CLIENT_ID)
 const EMAIL_CODE_TTL_MINUTES = 10
 const EMAIL_CODE_COOLDOWN_MS = 60 * 1000
 const EMAIL_CODE_HOURLY_LIMIT = 5
@@ -825,6 +828,157 @@ router.post("/verify-email", async (req, res) => {
     } catch (e) {
         console.error("VERIFY-EMAIL ERROR", e)
         return res.status(500).json({ error: "Server error" })
+    }
+})
+
+router.post("/google", async (req, res) => {
+    try {
+        const { credential, role, inviteCode, organization, profileUrl } = req.body || {}
+
+        if (!credential) {
+            return res.status(400).json({
+                error: "Google credential is required"
+            })
+        }
+
+        const ticket = await googleClient.verifyIdToken({
+            idToken: credential,
+            audience: process.env.GOOGLE_CLIENT_ID,
+        })
+
+        const payload = ticket.getPayload()
+
+        if (!payload) {
+            return res.status(401).json({
+                error: "Invalid Google token"
+            })
+        }
+
+        const email = String(payload.email || "").trim().toLowerCase()
+        const emailVerified = payload.email_verified === true
+        const nameFromGoogle = String(payload.name || "").trim()
+        const avatarFromGoogle = String(payload.picture || "").trim()
+        const googleSub = String(payload.sub || "").trim()
+
+        if (!email || !emailVerified || !googleSub) {
+            return res.status(401).json({
+                error: "Google account is not verified"
+            })
+        }
+
+        let user = await prisma.user.findUnique({
+            where: { email }
+        })
+
+        if (!user) {
+            const { dbRole, status } = computeRoleAndStatus(
+                email,
+                role,
+                inviteCode
+            )
+
+            user = await prisma.user.create({
+                data: {
+                    email,
+                    password: "",
+                    name: nameFromGoogle || "Google User",
+                    role: dbRole,
+                    status,
+                    organization: organization ? String(organization).trim() : null,
+                    profileUrl: profileUrl
+                        ? String(profileUrl).trim()
+                        : avatarFromGoogle || null,
+                    inviteCode: inviteCode ? String(inviteCode).trim() : null,
+                },
+            })
+
+            if (dbRole === "TEACHER") {
+                try {
+                    await sendNewRegistrationAdminEmail(user)
+                } catch (e) {
+                    console.error("[auth/google] Failed to send admin registration email", {
+                        userId: user.id,
+                        email: user.email,
+                        error: e?.message,
+                    })
+                }
+            }
+        }
+
+        if (user.status === "BLOCKED") {
+            return res.status(403).json({
+                error: "Account is blocked"
+            })
+        }
+
+        if (user.status === "PENDING") {
+            return res.status(401).json({
+                error: "Account is awaiting admin approval"
+            })
+        }
+
+        const accessToken = generateAccessToken(user.id, user.role)
+        const refreshToken = generateRefreshToken(user.id)
+
+        const device = req.headers["user-agent"] ?? "unknown"
+        const location = await getLocationFromIP(req)
+
+        const existingSession = await prisma.refreshToken.findFirst({
+            where: {
+                userId: user.id,
+                device,
+                location
+            }
+        })
+
+        const isNewDevice = !existingSession
+
+        await prisma.refreshToken.create({
+            data: {
+                token: refreshToken,
+                userId: user.id,
+                device,
+                location,
+                userAgent: device,
+                lastUsedAt: new Date(),
+                expiresAt: new Date(Date.now() + 604800000)
+            }
+        })
+
+        await enforceMaxDevices(user.id)
+        await cleanupExpiredTokens()
+
+        res.cookie("refreshToken", refreshToken, {
+            httpOnly: true,
+            secure: true,
+            sameSite: "none",
+            maxAge: 604800000
+        })
+
+        return res.json({
+            token: accessToken,
+            user: {
+                id: user.id,
+                email: user.email,
+                name: user.name,
+                role:
+                    user.role === "ADMIN"
+                        ? "admin"
+                        : user.role === "TEACHER"
+                            ? "teacher"
+                            : "student",
+                status: user.status,
+                createdAt: user.createdAt
+            },
+            device,
+            location,
+            isNewDevice
+        })
+    } catch (e) {
+        console.error("[auth/google] 500:", e)
+        return res.status(401).json({
+            error: "Invalid Google token"
+        })
     }
 })
 
