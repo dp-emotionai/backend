@@ -984,6 +984,13 @@ router.post("/:id/metrics", roleMiddleware(["STUDENT"]), async (req, res) => {
                     ? body.dominantEmotion
                     : "Neutral";
 
+        const engagement =
+            typeof body.engagement === "number" ? body.engagement : null;
+        const stress =
+            typeof body.stress === "number" ? body.stress : null;
+        const fatigue =
+            typeof body.fatigue === "number" ? body.fatigue : null;
+
         if (body && body.image) {
             const ml = await analyzeFrameWithML(body.image);
 
@@ -1010,6 +1017,9 @@ router.post("/:id/metrics", roleMiddleware(["STUDENT"]), async (req, res) => {
                 risk,
                 state,
                 dominantEmotion,
+                engagement,
+                stress,
+                fatigue,
             },
         });
 
@@ -1080,6 +1090,9 @@ router.get("/:id/live-metrics", async (req, res) => {
                 fullName: [u?.firstName, u?.lastName].filter(Boolean).join(" ") || u?.email || uid,
                 emotion: s.emotion,
                 confidence: s.confidence,
+                engagement: s.engagement ?? null,
+                stress: s.stress ?? null,
+                fatigue: s.fatigue ?? null,
                 risk: s.risk,
                 state: s.state,
                 dominant_emotion: s.dominantEmotion,
