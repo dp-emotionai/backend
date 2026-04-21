@@ -5,14 +5,19 @@ CREATE TYPE "Role" AS ENUM ('STUDENT', 'TEACHER', 'ADMIN');
 CREATE TABLE "User" (
     "id" TEXT NOT NULL,
     "email" TEXT NOT NULL,
-    "password" TEXT NOT NULL,
+    "password" TEXT,
     "role" "Role" NOT NULL,
-    "name" TEXT,
+    "firstName" TEXT NOT NULL,
+    "lastName" TEXT NOT NULL,
+    "bio" TEXT,
+    "phone" TEXT,
     "status" TEXT NOT NULL DEFAULT 'APPROVED',
     "organization" TEXT,
-    "profileUrl" TEXT,
     "inviteCode" TEXT,
     "avatar" BYTEA,
+    "avatarMimeType" TEXT,
+    "avatarUpdatedAt" TIMESTAMP(3),
+    "externalAvatarUrl" TEXT,
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updatedAt" TIMESTAMP(3) NOT NULL,
 
@@ -290,6 +295,72 @@ CREATE TABLE "SessionChatPolicy" (
     CONSTRAINT "SessionChatPolicy_pkey" PRIMARY KEY ("sessionId")
 );
 
+-- CreateTable
+CREATE TABLE "SessionNote" (
+    "id" TEXT NOT NULL,
+    "sessionId" TEXT NOT NULL,
+    "userId" TEXT NOT NULL,
+    "text" TEXT NOT NULL,
+    "pinned" BOOLEAN NOT NULL DEFAULT false,
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updatedAt" TIMESTAMP(3) NOT NULL,
+
+    CONSTRAINT "SessionNote_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "UserNotificationSettings" (
+    "id" TEXT NOT NULL,
+    "userId" TEXT NOT NULL,
+    "emailNotifications" BOOLEAN NOT NULL DEFAULT true,
+    "pushNotifications" BOOLEAN NOT NULL DEFAULT true,
+    "dailyDigestEnabled" BOOLEAN NOT NULL DEFAULT false,
+    "dailyDigestTime" TEXT,
+    "quietHoursEnabled" BOOLEAN NOT NULL DEFAULT false,
+    "quietHoursStart" TEXT,
+    "quietHoursEnd" TEXT,
+    "scheduleNotifications" BOOLEAN NOT NULL DEFAULT true,
+    "assignmentNotifications" BOOLEAN NOT NULL DEFAULT true,
+    "messageNotifications" BOOLEAN NOT NULL DEFAULT true,
+    "groupNotifications" BOOLEAN NOT NULL DEFAULT true,
+    "systemNotifications" BOOLEAN NOT NULL DEFAULT true,
+    "reportNotifications" BOOLEAN NOT NULL DEFAULT true,
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updatedAt" TIMESTAMP(3) NOT NULL,
+
+    CONSTRAINT "UserNotificationSettings_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "UserPreference" (
+    "id" TEXT NOT NULL,
+    "userId" TEXT NOT NULL,
+    "language" TEXT DEFAULT 'ru',
+    "region" TEXT,
+    "timezone" TEXT,
+    "preferredDateFormat" TEXT,
+    "weekStartsOn" TEXT,
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updatedAt" TIMESTAMP(3) NOT NULL,
+
+    CONSTRAINT "UserPreference_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "UserIntegration" (
+    "id" TEXT NOT NULL,
+    "userId" TEXT NOT NULL,
+    "provider" TEXT NOT NULL,
+    "connected" BOOLEAN NOT NULL DEFAULT false,
+    "connectedAt" TIMESTAMP(3),
+    "externalAccountId" TEXT,
+    "metadata" JSONB,
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updatedAt" TIMESTAMP(3) NOT NULL,
+
+    CONSTRAINT "UserIntegration_pkey" PRIMARY KEY ("id")
+);
+
 -- CreateIndex
 CREATE UNIQUE INDEX "User_email_key" ON "User"("email");
 
@@ -364,6 +435,24 @@ CREATE INDEX "MessageRead_userId_idx" ON "MessageRead"("userId");
 
 -- CreateIndex
 CREATE UNIQUE INDEX "MessageRead_groupMessageId_userId_key" ON "MessageRead"("groupMessageId", "userId");
+
+-- CreateIndex
+CREATE INDEX "SessionNote_sessionId_createdAt_idx" ON "SessionNote"("sessionId", "createdAt");
+
+-- CreateIndex
+CREATE INDEX "SessionNote_userId_idx" ON "SessionNote"("userId");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "UserNotificationSettings_userId_key" ON "UserNotificationSettings"("userId");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "UserPreference_userId_key" ON "UserPreference"("userId");
+
+-- CreateIndex
+CREATE INDEX "UserIntegration_userId_idx" ON "UserIntegration"("userId");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "UserIntegration_userId_provider_key" ON "UserIntegration"("userId", "provider");
 
 -- AddForeignKey
 ALTER TABLE "RefreshToken" ADD CONSTRAINT "RefreshToken_userId_fkey" FOREIGN KEY ("userId") REFERENCES "User"("id") ON DELETE CASCADE ON UPDATE CASCADE;
@@ -448,3 +537,18 @@ ALTER TABLE "GroupChatSettings" ADD CONSTRAINT "GroupChatSettings_groupId_fkey" 
 
 -- AddForeignKey
 ALTER TABLE "SessionChatPolicy" ADD CONSTRAINT "SessionChatPolicy_sessionId_fkey" FOREIGN KEY ("sessionId") REFERENCES "Session"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "SessionNote" ADD CONSTRAINT "SessionNote_sessionId_fkey" FOREIGN KEY ("sessionId") REFERENCES "Session"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "SessionNote" ADD CONSTRAINT "SessionNote_userId_fkey" FOREIGN KEY ("userId") REFERENCES "User"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "UserNotificationSettings" ADD CONSTRAINT "UserNotificationSettings_userId_fkey" FOREIGN KEY ("userId") REFERENCES "User"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "UserPreference" ADD CONSTRAINT "UserPreference_userId_fkey" FOREIGN KEY ("userId") REFERENCES "User"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "UserIntegration" ADD CONSTRAINT "UserIntegration_userId_fkey" FOREIGN KEY ("userId") REFERENCES "User"("id") ON DELETE CASCADE ON UPDATE CASCADE;

@@ -41,7 +41,17 @@ async function main() {
 
     if (existing) {
         if (existing.role === "ADMIN") {
-            console.log("Админ уже существует:", normalizedEmail);
+            await prisma.user.update({
+                where: { email: normalizedEmail },
+                data: {
+                    password: passwordHash,
+                    firstName: existing.firstName || "Admin",
+                    lastName: existing.lastName || "User",
+                    status: existing.status || "APPROVED",
+                },
+            });
+
+            console.log("Админ уже существует, пароль обновлён:", normalizedEmail);
             return;
         }
 
@@ -50,7 +60,9 @@ async function main() {
             data: {
                 role: "ADMIN",
                 password: passwordHash,
-                name: existing.name || "Admin",
+                firstName: existing.firstName || "Admin",
+                lastName: existing.lastName || "User",
+                status: "APPROVED",
             },
         });
 
@@ -61,7 +73,9 @@ async function main() {
                 email: normalizedEmail,
                 password: passwordHash,
                 role: "ADMIN",
-                name: "Admin",
+                firstName: "Admin",
+                lastName: "User",
+                status: "APPROVED",
             },
         });
 
