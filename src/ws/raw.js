@@ -200,7 +200,7 @@ function handleChatConnection(ws) {
                 const decoded = jwt.verify(token, process.env.JWT_SECRET)
                 client = {
                     userId: decoded.sub || decoded.id || decoded.userId,
-                    role: decoded.role || null,
+                    role: typeof decoded.role === "string" ? decoded.role.toUpperCase() : null,
                 }
                 chatClients.set(ws, client)
                 send(ws, { type: "auth-ok" })
