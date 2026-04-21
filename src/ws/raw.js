@@ -365,7 +365,6 @@ export function initRawWebSockets(server) {
                 chatWss.handleUpgrade(request, socket, head, (ws) => {
                     chatWss.emit("connection", ws, request)
                 })
-                return
             }
         } catch {
             socket.destroy()
