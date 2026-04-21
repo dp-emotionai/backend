@@ -30,6 +30,16 @@ const generateClientId = () => {
     return crypto.randomBytes(16).toString("hex")
 }
 
+export function broadcastSessionChatMessage(sessionId, payload) {
+    const roomKey = `session:${sessionId}`
+    const members = chatRooms.get(roomKey)
+    if (!members || members.size === 0) return
+
+    for (const member of members) {
+        send(member, payload)
+    }
+}
+
 function handleSignalingConnection(ws) {
     let clientInfo = null
 
@@ -173,7 +183,7 @@ function handleChatConnection(ws) {
     }
 
     ws.on("message", async (raw) => {
-        const msg = safeJsonParse(raw)
+        let msg = safeJsonParse(raw)
         if (!msg || typeof msg.type !== "string") {
             send(ws, { type: "error", message: "Invalid message" })
             return
@@ -204,6 +214,22 @@ function handleChatConnection(ws) {
         if (!client) {
             send(ws, { type: "error", message: "Authenticate first" })
             return
+        }
+
+        if (msg.type === "subscribe") {
+            if (msg.scope === "session" && typeof msg.sessionId === "string") {
+                msg = {
+                    type: "join",
+                    room: "session",
+                    id: msg.sessionId,
+                }
+            } else if (msg.scope === "group" && typeof msg.groupId === "string") {
+                msg = {
+                    type: "join",
+                    room: "group",
+                    id: msg.groupId,
+                }
+            }
         }
 
         if (msg.type === "join") {
@@ -335,7 +361,7 @@ export function initRawWebSockets(server) {
                 return
             }
 
-            if (pathname === "/api/ws-chat") {
+            if (pathname === "/api/ws-chat" || pathname === "/ws-chat") {
                 chatWss.handleUpgrade(request, socket, head, (ws) => {
                     chatWss.emit("connection", ws, request)
                 })
@@ -346,4 +372,3 @@ export function initRawWebSockets(server) {
         }
     })
 }
-

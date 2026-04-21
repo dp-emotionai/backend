@@ -4,6 +4,7 @@ import prisma from "../utils/prisma.js";
 import authMiddleware from "../middleware/authMiddleware.js";
 import roleMiddleware from "../middleware/roleMiddleware.js";
 import { getIO } from "../ws/server.js";
+import { broadcastSessionChatMessage } from "../ws/raw.js";
 
 const router = express.Router();
 
@@ -446,6 +447,17 @@ router.get("/:id/messages", async (req, res) => {
             where: { sessionId, channel: channel === "help" ? "help" : "public" },
             orderBy: { createdAt: "desc" },
             take,
+            include: {
+                sender: {
+                    select: {
+                        id: true,
+                        email: true,
+                        role: true,
+                        firstName: true,
+                        lastName: true,
+                    },
+                },
+            },
         });
 
         res.json(
@@ -454,6 +466,11 @@ router.get("/:id/messages", async (req, res) => {
                     id: m.id,
                     sessionId: m.sessionId,
                     senderId: m.senderId,
+                    senderName:
+                        [m.sender?.firstName, m.sender?.lastName].filter(Boolean).join(" ") ||
+                        m.sender?.email ||
+                        m.senderId,
+                    senderRole: m.sender?.role ? String(m.sender.role).toLowerCase() : null,
                     type: m.type,
                     text: m.text,
                     channel: m.channel,
@@ -515,21 +532,44 @@ router.post("/:id/messages", async (req, res) => {
             },
         });
 
+        const senderName =
+            req.user.fullName ||
+            [req.user.firstName, req.user.lastName].filter(Boolean).join(" ") ||
+            req.user.email ||
+            msg.senderId;
+
         const payload = {
             id: msg.id,
             sessionId: msg.sessionId,
             senderId: msg.senderId,
+            senderName,
+            senderRole: String(req.user.role || "").toLowerCase(),
             type: msg.type,
             text: msg.text,
             channel: msg.channel,
             createdAt: msg.createdAt,
         };
 
+        const wsPayload = {
+            type: "message.new",
+            scope: "session",
+            sessionId,
+            channel: ch,
+            event: {
+                id: msg.id,
+                text: msg.text,
+                senderId: msg.senderId,
+                senderName,
+                senderRole: String(req.user.role || "").toLowerCase(),
+                createdAt: msg.createdAt,
+                channel: msg.channel,
+            },
+        };
+
         try {
-            const io = getIO();
-            io.to(`session:${sessionId}`).emit("session:message", payload);
+            broadcastSessionChatMessage(sessionId, wsPayload);
         } catch (wsError) {
-            console.error("POST /sessions/:id/messages emit error", wsError);
+            console.error("POST /sessions/:id/messages broadcast error", wsError);
         }
 
         res.status(201).json(payload);

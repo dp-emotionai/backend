@@ -218,6 +218,9 @@ model SessionEmotionSample {
   risk            Float
   state           String
   dominantEmotion String
+  engagement      Float?
+  stress          Float?
+  fatigue         Float?
 
   session Session @relation(fields: [sessionId], references: [id], onDelete: Cascade)
   user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
