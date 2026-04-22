@@ -20,6 +20,9 @@ import studentRoutes from "./routes/student.js"
 import teacherRoutes from "./routes/teacher.js"
 import adminRoutes from "./routes/admin.js"
 import userSettingsRoutes from "./routes/userSettings.js";
+import materialsRouter from "./routes/materials.js";
+import calendarRouter from "./routes/calendar.js";
+import notificationsRouter from "./routes/notifications.js";
 
 const app = express()
 
@@ -39,6 +42,9 @@ app.use(express.urlencoded({ extended: true, limit: "100kb" }))
 app.use(cookieParser())
 app.use(rateLimit)
 app.use("/uploads", express.static("uploads"))
+app.use("/api/materials", materialsRouter);
+app.use("/api/calendar", calendarRouter);
+app.use("/api/notifications", notificationsRouter);
 
 /* ROUTES */
 app.get("/", (req, res) => {

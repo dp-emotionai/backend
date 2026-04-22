@@ -4,8 +4,7 @@ import prisma from "../utils/prisma.js";
 import authMiddleware from "../middleware/authMiddleware.js";
 import roleMiddleware from "../middleware/roleMiddleware.js";
 import { getIO } from "../ws/server.js";
-import { broadcastSessionChatMessage } from "../ws/raw.js";
-
+import { broadcastSessionChatMessage, broadcastSessionEvent } from "../ws/raw.js";
 const router = express.Router();
 
 function randomCode() {
@@ -902,6 +901,8 @@ router.patch("/:id", async (req, res) => {
 
         if (body.title !== undefined) updates.title = String(body.title).trim();
         if (body.type === "lecture" || body.type === "exam") updates.type = body.type;
+        if (body.scheduledStartAt !== undefined) updates.scheduledStartAt = body.scheduledStartAt ? new Date(body.scheduledStartAt) : null;
+        if (body.scheduledEndAt !== undefined) updates.scheduledEndAt = body.scheduledEndAt ? new Date(body.scheduledEndAt) : null;
 
         if (body.status === "active") {
             updates.status = "active";
@@ -918,6 +919,27 @@ router.patch("/:id", async (req, res) => {
             data: updates,
             include: { group: true },
         });
+
+        if (updated.status === "active" && session.status !== "active") {
+            try {
+                const members = await prisma.groupMember.findMany({
+                    where: { groupId: updated.groupId },
+                    select: { userId: true },
+                });
+
+                await prisma.notification.createMany({
+                    data: members.map(m => ({
+                        userId: m.userId,
+                        type: "session_started",
+                        title: "Сессия началась",
+                        body: `Сессия ${updated.title} началась`,
+                        data: { sessionId: updated.id }
+                    }))
+                });
+            } catch (notifErr) {
+                console.error("PATCH /sessions/:id — notifications error", notifErr);
+            }
+        }
 
         if (updated.status === "finished") {
             try {
@@ -941,6 +963,8 @@ router.patch("/:id", async (req, res) => {
             groupName: updated.group.name,
             startedAt: updated.startedAt,
             endedAt: updated.endedAt,
+            scheduledStartAt: updated.scheduledStartAt ?? null,
+            scheduledEndAt: updated.scheduledEndAt ?? null,
         });
     } catch (e) {
         console.error("PATCH /sessions/:id", e);
@@ -1078,9 +1102,14 @@ router.get("/:id/live-metrics", async (req, res) => {
 
         const userMap = new Map(users.map((u) => [u.id, u]));
 
+        const nowMs = Date.now();
+        const staleTtlMs = 15000;
+
         const participants = userIds.map((uid) => {
             const s = latestByUser.get(uid);
             const u = userMap.get(uid);
+            const updatedAtIso = s.timestamp.toISOString();
+            const isStale = nowMs - s.timestamp.getTime() > staleTtlMs;
 
             return {
                 userId: uid,
@@ -1096,7 +1125,9 @@ router.get("/:id/live-metrics", async (req, res) => {
                 risk: s.risk,
                 state: s.state,
                 dominant_emotion: s.dominantEmotion,
-                updatedAt: s.timestamp.toISOString(),
+                updatedAt: updatedAtIso,
+                lastSeenAt: updatedAtIso,
+                isStale,
             };
         });
 
@@ -1266,6 +1297,406 @@ router.get("/:id/timeline", async (req, res) => {
     }
 });
 
+router.get("/:id/content", async (req, res) => {
+    try {
+        const sessionId = req.params.id;
+        const userId = req.user.id;
+        const role = req.user.role;
+
+        const access = await getSessionWithAccessContext(sessionId, userId, role);
+
+        if (access.error) {
+            return res.status(access.error.status).json(access.error.body);
+        }
+
+        if (!access.canAccess) {
+            return res.status(403).json({ error: "Forbidden" });
+        }
+
+        const content = await prisma.sessionContent.findUnique({
+            where: { sessionId },
+        });
+
+        if (!content) {
+            return res.json({
+                sessionId,
+                lessonPlan: "",
+                keyPoints: [],
+                updatedAt: null,
+            });
+        }
+
+        return res.json({
+            sessionId: content.sessionId,
+            lessonPlan: content.lessonPlan || "",
+            keyPoints: Array.isArray(content.keyPoints) ? content.keyPoints : [],
+            updatedAt: content.updatedAt,
+        });
+    } catch (e) {
+        console.error("GET /sessions/:id/content", e);
+        return res.status(500).json({ error: "Failed to get session content" });
+    }
+});
+
+router.put("/:id/content", roleMiddleware(["TEACHER", "ADMIN"]), async (req, res) => {
+    try {
+        const sessionId = req.params.id;
+        const userId = req.user.id;
+        const role = req.user.role;
+        const { lessonPlan, keyPoints } = req.body || {};
+
+        const access = await getSessionWithAccessContext(sessionId, userId, role);
+
+        if (access.error) {
+            return res.status(access.error.status).json(access.error.body);
+        }
+
+        if (!access.isOwner && !access.isAdmin) {
+            return res.status(403).json({ error: "Forbidden" });
+        }
+
+        const lessonPlanValue =
+            lessonPlan === undefined || lessonPlan === null
+                ? null
+                : String(lessonPlan).trim();
+
+        let keyPointsValue = [];
+
+        if (keyPoints !== undefined) {
+            if (!Array.isArray(keyPoints)) {
+                return res.status(400).json({ error: "keyPoints must be an array" });
+            }
+
+            keyPointsValue = keyPoints
+                .map((point) => String(point).trim())
+                .filter(Boolean);
+        }
+
+        const content = await prisma.sessionContent.upsert({
+            where: { sessionId },
+            create: {
+                sessionId,
+                lessonPlan: lessonPlanValue,
+                keyPoints: keyPointsValue,
+            },
+            update: {
+                lessonPlan: lessonPlanValue,
+                keyPoints: keyPointsValue,
+            },
+        });
+
+        return res.json({
+            sessionId: content.sessionId,
+            lessonPlan: content.lessonPlan || "",
+            keyPoints: Array.isArray(content.keyPoints) ? content.keyPoints : [],
+            updatedAt: content.updatedAt,
+        });
+    } catch (e) {
+        console.error("PUT /sessions/:id/content", e);
+        return res.status(500).json({ error: "Failed to update session content" });
+    }
+});
+
+router.get("/:id/whiteboard", async (req, res) => {
+    try {
+        const sessionId = req.params.id;
+        const userId = req.user.id;
+        const role = req.user.role;
+
+        const access = await getSessionWithAccessContext(sessionId, userId, role);
+
+        if (access.error) {
+            return res.status(access.error.status).json(access.error.body);
+        }
+
+        if (!access.canAccess) {
+            return res.status(403).json({ error: "Forbidden" });
+        }
+
+        const whiteboard = await prisma.sessionWhiteboard.findUnique({
+            where: { sessionId },
+        });
+
+        if (!whiteboard) {
+            return res.json({
+                sessionId,
+                elements: [],
+                version: 1,
+                updatedAt: null,
+            });
+        }
+
+        return res.json({
+            sessionId: whiteboard.sessionId,
+            elements: Array.isArray(whiteboard.elements) ? whiteboard.elements : [],
+            version: whiteboard.version,
+            updatedAt: whiteboard.updatedAt,
+        });
+    } catch (e) {
+        console.error("GET /sessions/:id/whiteboard", e);
+        return res.status(500).json({ error: "Failed to get whiteboard" });
+    }
+});
+
+router.put("/:id/whiteboard", async (req, res) => {
+    try {
+        const sessionId = req.params.id;
+        const userId = req.user.id;
+        const role = req.user.role;
+        const { elements, version } = req.body || {};
+
+        const access = await getSessionWithAccessContext(sessionId, userId, role);
+
+        if (access.error) {
+            return res.status(access.error.status).json(access.error.body);
+        }
+
+        if (!access.canAccess) {
+            return res.status(403).json({ error: "Forbidden" });
+        }
+
+        if (!Array.isArray(elements)) {
+            return res.status(400).json({ error: "elements must be an array" });
+        }
+
+        const nextVersion =
+            typeof version === "number" && Number.isFinite(version) && version > 0
+                ? version
+                : 1;
+
+        const whiteboard = await prisma.sessionWhiteboard.upsert({
+            where: { sessionId },
+            create: {
+                sessionId,
+                elements,
+                version: nextVersion,
+            },
+            update: {
+                elements,
+                version: nextVersion,
+            },
+        });
+
+        const snapshotEvent = {
+            type: "whiteboard.snapshot",
+            scope: "session",
+            sessionId,
+            event: {
+                sessionId: whiteboard.sessionId,
+                elements: Array.isArray(whiteboard.elements) ? whiteboard.elements : [],
+                version: whiteboard.version,
+                updatedAt: whiteboard.updatedAt,
+            },
+        };
+
+        try {
+            broadcastSessionEvent(sessionId, snapshotEvent);
+        } catch (wsError) {
+            console.error("PUT /sessions/:id/whiteboard broadcast error", wsError);
+        }
+
+        return res.json({
+            sessionId: whiteboard.sessionId,
+            elements: Array.isArray(whiteboard.elements) ? whiteboard.elements : [],
+            version: whiteboard.version,
+            updatedAt: whiteboard.updatedAt,
+        });
+    } catch (e) {
+        console.error("PUT /sessions/:id/whiteboard", e);
+        return res.status(500).json({ error: "Failed to update whiteboard" });
+    }
+});
+
+router.post("/:id/whiteboard/op", async (req, res) => {
+    try {
+        const sessionId = req.params.id;
+        const userId = req.user.id;
+        const role = req.user.role;
+        const { kind, payload } = req.body || {};
+
+        const access = await getSessionWithAccessContext(sessionId, userId, role);
+
+        if (access.error) {
+            return res.status(access.error.status).json(access.error.body);
+        }
+
+        if (!access.canAccess) {
+            return res.status(403).json({ error: "Forbidden" });
+        }
+
+        if (!kind || typeof kind !== "string") {
+            return res.status(400).json({ error: "kind is required" });
+        }
+
+        if (payload === undefined || payload === null || typeof payload !== "object" || Array.isArray(payload)) {
+            return res.status(400).json({ error: "payload must be an object" });
+        }
+
+        const current = await prisma.sessionWhiteboard.findUnique({
+            where: { sessionId },
+        });
+
+        const currentVersion = current?.version ?? 0;
+        const nextVersion = currentVersion + 1;
+
+        let nextElements = Array.isArray(current?.elements) ? current.elements : [];
+
+        if (kind === "replace_snapshot") {
+            if (!Array.isArray(payload.elements)) {
+                return res.status(400).json({ error: "payload.elements must be an array" });
+            }
+            nextElements = payload.elements;
+        } else if (kind === "reset") {
+            nextElements = [];
+        } else if (kind === "draw_batch") {
+            if (!Array.isArray(payload.elements)) {
+                return res.status(400).json({ error: "payload.elements must be an array" });
+            }
+            nextElements = payload.elements;
+        }
+
+        const op = await prisma.whiteboardOperation.create({
+            data: {
+                sessionId,
+                userId,
+                kind,
+                payload,
+                version: nextVersion,
+            },
+        });
+
+        const whiteboard = await prisma.sessionWhiteboard.upsert({
+            where: { sessionId },
+            create: {
+                sessionId,
+                elements: nextElements,
+                version: nextVersion,
+            },
+            update: {
+                elements: nextElements,
+                version: nextVersion,
+            },
+        });
+
+        const opEvent = {
+            type: "whiteboard.op",
+            scope: "session",
+            sessionId,
+            event: {
+                opId: op.id,
+                userId,
+                kind: op.kind,
+                payload: op.payload,
+                version: op.version,
+                createdAt: op.createdAt,
+            },
+        };
+
+        const snapshotEvent = {
+            type: "whiteboard.snapshot",
+            scope: "session",
+            sessionId,
+            event: {
+                sessionId: whiteboard.sessionId,
+                elements: Array.isArray(whiteboard.elements) ? whiteboard.elements : [],
+                version: whiteboard.version,
+                updatedAt: whiteboard.updatedAt,
+            },
+        };
+
+        try {
+            if (kind === "reset") {
+                broadcastSessionEvent(sessionId, {
+                    type: "whiteboard.reset",
+                    scope: "session",
+                    sessionId,
+                    event: {
+                        version: whiteboard.version,
+                        updatedAt: whiteboard.updatedAt,
+                    },
+                });
+            } else {
+                broadcastSessionEvent(sessionId, opEvent);
+            }
+
+            broadcastSessionEvent(sessionId, snapshotEvent);
+        } catch (wsError) {
+            console.error("POST /sessions/:id/whiteboard/op broadcast error", wsError);
+        }
+
+        return res.status(201).json({
+            ok: true,
+            operation: {
+                id: op.id,
+                sessionId,
+                userId,
+                kind: op.kind,
+                payload: op.payload,
+                version: op.version,
+                createdAt: op.createdAt,
+            },
+            whiteboard: {
+                sessionId: whiteboard.sessionId,
+                elements: Array.isArray(whiteboard.elements) ? whiteboard.elements : [],
+                version: whiteboard.version,
+                updatedAt: whiteboard.updatedAt,
+            },
+        });
+    } catch (e) {
+        console.error("POST /sessions/:id/whiteboard/op", e);
+        return res.status(500).json({ error: "Failed to apply whiteboard operation" });
+    }
+});
+
+router.get("/:id/whiteboard/ops", async (req, res) => {
+    try {
+        const sessionId = req.params.id;
+        const userId = req.user.id;
+        const role = req.user.role;
+        const afterVersionRaw = req.query.afterVersion;
+        const afterVersion =
+            typeof afterVersionRaw === "string" && afterVersionRaw.trim()
+                ? Number(afterVersionRaw)
+                : 0;
+
+        const access = await getSessionWithAccessContext(sessionId, userId, role);
+
+        if (access.error) {
+            return res.status(access.error.status).json(access.error.body);
+        }
+
+        if (!access.canAccess) {
+            return res.status(403).json({ error: "Forbidden" });
+        }
+
+        const ops = await prisma.whiteboardOperation.findMany({
+            where: {
+                sessionId,
+                version: Number.isFinite(afterVersion) && afterVersion > 0
+                    ? { gt: afterVersion }
+                    : undefined,
+            },
+            orderBy: { version: "asc" },
+            take: 500,
+        });
+
+        return res.json({
+            sessionId,
+            operations: ops.map((op) => ({
+                id: op.id,
+                userId: op.userId,
+                kind: op.kind,
+                payload: op.payload,
+                version: op.version,
+                createdAt: op.createdAt,
+            })),
+        });
+    } catch (e) {
+        console.error("GET /sessions/:id/whiteboard/ops", e);
+        return res.status(500).json({ error: "Failed to get whiteboard operations" });
+    }
+});
+
 router.get("/:id", async (req, res) => {
     try {
         const id = req.params.id;
@@ -1314,10 +1745,152 @@ router.get("/:id", async (req, res) => {
             startedAt: session.startedAt,
             endedAt: session.endedAt,
             createdAt: session.createdAt,
+            scheduledStartAt: session.scheduledStartAt ?? null,
+            scheduledEndAt: session.scheduledEndAt ?? null,
         });
     } catch (e) {
         console.error("GET /sessions/:id", e);
         res.status(500).json({ error: "Failed to get session" });
+    }
+});
+
+router.get("/:id/presence", async (req, res) => {
+    try {
+        const sessionId = req.params.id;
+        const userId = req.user.id;
+
+        const session = await prisma.session.findUnique({
+            where: { id: sessionId }
+        });
+
+        if (!session) {
+            return res.status(404).json({ error: "Session not found" });
+        }
+
+        const states = await prisma.sessionParticipantState.findMany({
+            where: { sessionId },
+            include: {
+                user: {
+                    select: {
+                        id: true,
+                        email: true,
+                        firstName: true,
+                        lastName: true
+                    }
+                }
+            }
+        });
+
+        return res.json(states.map(s => ({
+            userId: s.userId,
+            fullName: [s.user?.firstName, s.user?.lastName].filter(Boolean).join(" "),
+            email: s.user?.email,
+            status: s.status,
+            joinedAt: s.joinedAt,
+            leftAt: s.leftAt,
+            updatedAt: s.updatedAt
+        })));
+
+    } catch (e) {
+        console.error("GET /sessions/:id/presence", e);
+        return res.status(500).json({ error: "Failed to get presence" });
+    }
+});
+
+router.post("/:id/presence/join", async (req, res) => {
+    try {
+        const sessionId = req.params.id;
+        const userId = req.user.id;
+
+        const now = new Date();
+
+        const state = await prisma.sessionParticipantState.upsert({
+            where: {
+                sessionId_userId: {
+                    sessionId,
+                    userId
+                }
+            },
+            create: {
+                sessionId,
+                userId,
+                status: "online",
+                joinedAt: now
+            },
+            update: {
+                status: "online",
+                joinedAt: now,
+                leftAt: null
+            }
+        });
+
+        return res.json({ ok: true, state });
+
+    } catch (e) {
+        console.error("POST /sessions/:id/presence/join", e);
+        return res.status(500).json({ error: "Failed to join session" });
+    }
+});
+
+router.post("/:id/presence/leave", async (req, res) => {
+    try {
+        const sessionId = req.params.id;
+        const userId = req.user.id;
+
+        const now = new Date();
+
+        await prisma.sessionParticipantState.updateMany({
+            where: {
+                sessionId,
+                userId
+            },
+            data: {
+                status: "offline",
+                leftAt: now
+            }
+        });
+
+        return res.json({ ok: true });
+
+    } catch (e) {
+        console.error("POST /sessions/:id/presence/leave", e);
+        return res.status(500).json({ error: "Failed to leave session" });
+    }
+});
+
+router.patch("/:id/state", async (req, res) => {
+    try {
+        const sessionId = req.params.id;
+        const userId = req.user.id;
+
+        const session = await prisma.session.findUnique({
+            where: { id: sessionId }
+        });
+
+        if (!session) {
+            return res.status(404).json({ error: "Session not found" });
+        }
+
+        if (session.createdById !== userId && req.user.role !== "ADMIN") {
+            return res.status(403).json({ error: "Forbidden" });
+        }
+
+        const { status } = req.body || {};
+
+        if (!["active", "finished", "draft"].includes(status)) {
+            return res.status(400).json({ error: "Invalid status" });
+        }
+
+        const updated = await prisma.session.update({
+            where: { id: sessionId },
+            data: { status }
+        });
+
+        return res.json(updated);
+
+    } catch (e) {
+        console.error("PATCH /sessions/:id/state", e);
+        return res.status(500).json({ error: "Failed to update state" });
     }
 });
 

@@ -37,7 +37,7 @@
 
 - **PostgreSQL** — негізгі дерекқор
 - **Cloudinary** — файл/сурет сақтау
-- **Mailjet / Nodemailer / Resend** — email жіберу
+- **Resend** — email жіберу
 - **Node.js** — runtime (ES modules)
 - **Prisma** — миграциялар, seed, ERD генерациясы
 

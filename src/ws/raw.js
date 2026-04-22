@@ -40,6 +40,16 @@ export function broadcastSessionChatMessage(sessionId, payload) {
     }
 }
 
+export function broadcastSessionEvent(sessionId, payload) {
+    const roomKey = `session:${sessionId}`
+    const members = chatRooms.get(roomKey)
+    if (!members || members.size === 0) return
+
+    for (const member of members) {
+        send(member, payload)
+    }
+}
+
 function handleSignalingConnection(ws) {
     let clientInfo = null
 
