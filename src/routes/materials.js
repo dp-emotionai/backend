@@ -1,11 +1,63 @@
 import express from "express";
+import multer from "multer";
+import fs from "fs";
+import path from "path";
 import prisma from "../utils/prisma.js";
 import authMiddleware from "../middleware/authMiddleware.js";
 import roleMiddleware from "../middleware/roleMiddleware.js";
+import { broadcastGroupEvent, broadcastSessionEvent } from "../ws/raw.js";
 
 const router = express.Router();
 
+const materialsUploadDir = path.join(process.cwd(), "uploads", "materials");
+fs.mkdirSync(materialsUploadDir, { recursive: true });
+
+const upload = multer({
+    storage: multer.diskStorage({
+        destination: (_req, _file, cb) => cb(null, materialsUploadDir),
+        filename: (_req, file, cb) => {
+            const safeName = String(file.originalname || "file")
+                .replace(/[^a-zA-Z0-9а-яА-ЯёЁ._-]+/g, "_")
+                .slice(-120);
+
+            const unique = `${Date.now()}-${Math.round(Math.random() * 1e9)}`;
+            cb(null, `${unique}-${safeName}`);
+        },
+    }),
+    limits: {
+        fileSize: Number(process.env.MATERIAL_UPLOAD_MAX_BYTES || 25 * 1024 * 1024),
+    },
+});
+
+const mapAssignment = (assignment) => ({
+    id: assignment.id,
+    materialId: assignment.materialId,
+    groupId: assignment.groupId,
+    sessionId: assignment.sessionId,
+    visibleFrom: assignment.visibleFrom,
+    visibleTo: assignment.visibleTo,
+    createdAt: assignment.createdAt,
+});
+
 router.use(authMiddleware);
+
+router.post("/upload", roleMiddleware(["TEACHER", "ADMIN"]), upload.single("file"), async (req, res) => {
+    try {
+        if (!req.file) {
+            return res.status(400).json({ error: "file is required" });
+        }
+
+        return res.status(201).json({
+            storageKey: `materials/${req.file.filename}`,
+            fileName: req.file.originalname,
+            mimeType: req.file.mimetype,
+            size: req.file.size,
+        });
+    } catch (e) {
+        console.error("POST /materials/upload", e);
+        return res.status(500).json({ error: "Failed to upload material file" });
+    }
+});
 
 router.get("/", roleMiddleware(["TEACHER", "ADMIN"]), async (req, res) => {
     try {
@@ -166,6 +218,36 @@ router.delete("/:materialId", roleMiddleware(["TEACHER", "ADMIN"]), async (req, 
     }
 });
 
+router.get("/:materialId/assignments", roleMiddleware(["TEACHER", "ADMIN"]), async (req, res) => {
+    try {
+        const materialId = req.params.materialId;
+        const userId = req.user.id;
+        const role = req.user.role;
+
+        const material = await prisma.material.findUnique({
+            where: { id: materialId },
+        });
+
+        if (!material) {
+            return res.status(404).json({ error: "Material not found" });
+        }
+
+        if (role !== "ADMIN" && material.ownerId !== userId) {
+            return res.status(403).json({ error: "Forbidden" });
+        }
+
+        const assignments = await prisma.materialAssignment.findMany({
+            where: { materialId },
+            orderBy: { createdAt: "desc" },
+        });
+
+        return res.json(assignments.map(mapAssignment));
+    } catch (e) {
+        console.error("GET /materials/:materialId/assignments", e);
+        return res.status(500).json({ error: "Failed to get material assignments" });
+    }
+});
+
 router.post("/:materialId/assign", roleMiddleware(["TEACHER", "ADMIN"]), async (req, res) => {
     try {
         const materialId = req.params.materialId;
@@ -238,15 +320,22 @@ router.post("/:materialId/assign", roleMiddleware(["TEACHER", "ADMIN"]), async (
             },
         });
 
-        return res.status(201).json({
-            id: assignment.id,
-            materialId: assignment.materialId,
-            groupId: assignment.groupId,
-            sessionId: assignment.sessionId,
-            visibleFrom: assignment.visibleFrom,
-            visibleTo: assignment.visibleTo,
-            createdAt: assignment.createdAt,
-        });
+        const response = mapAssignment(assignment);
+
+        try {
+            const event = {
+                type: "material.assigned",
+                materialId,
+                assignment: response,
+            };
+
+            if (assignment.groupId) broadcastGroupEvent(assignment.groupId, event);
+            if (assignment.sessionId) broadcastSessionEvent(assignment.sessionId, event);
+        } catch (wsError) {
+            console.error("POST /materials/:materialId/assign broadcast error", wsError);
+        }
+
+        return res.status(201).json(response);
     } catch (e) {
         console.error("POST /materials/:materialId/assign", e);
         return res.status(500).json({ error: "Failed to assign material" });
@@ -283,7 +372,20 @@ router.delete("/:materialId/assignments/:assignmentId", roleMiddleware(["TEACHER
         await prisma.materialAssignment.delete({
             where: { id: assignmentId },
         });
+        try {
+            const event = {
+                type: "material.unassigned",
+                materialId,
+                assignmentId,
+                groupId: assignment.groupId,
+                sessionId: assignment.sessionId,
+            };
 
+            if (assignment.groupId) broadcastGroupEvent(assignment.groupId, event);
+            if (assignment.sessionId) broadcastSessionEvent(assignment.sessionId, event);
+        } catch (wsError) {
+            console.error("DELETE /materials/:materialId/assignments/:assignmentId broadcast error", wsError);
+        }
         return res.json({ ok: true, id: assignmentId });
     } catch (e) {
         console.error("DELETE /materials/:materialId/assignments/:assignmentId", e);

@@ -130,6 +130,7 @@ model Group {
   id        String @id @default(uuid())
   name      String
   teacherId String
+  imageUrl  String?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -380,6 +381,7 @@ model SessionMessage {
 
   type String
   text String
+  attachment Json?
 
   channel String @default("public")
 

@@ -50,6 +50,26 @@ export function broadcastSessionEvent(sessionId, payload) {
     }
 }
 
+export function broadcastGroupEvent(groupId, payload) {
+    const roomKey = `group:${groupId}`
+    const members = chatRooms.get(roomKey)
+    if (!members || members.size === 0) return
+
+    for (const member of members) {
+        send(member, payload)
+    }
+}
+
+export function broadcastUserEvent(userId, payload) {
+    const roomKey = `user:${userId}`
+    const members = chatRooms.get(roomKey)
+    if (!members || members.size === 0) return
+
+    for (const member of members) {
+        send(member, payload)
+    }
+}
+
 function handleSignalingConnection(ws) {
     let clientInfo = null
 
@@ -240,6 +260,13 @@ function handleChatConnection(ws) {
                     id: msg.groupId,
                 }
             }
+            else if (msg.scope === "user") {
+                msg = {
+                    type: "join",
+                    room: "user",
+                    id: client.userId,
+                }
+            }
         }
 
         if (msg.type === "join") {
@@ -312,11 +339,15 @@ function handleChatConnection(ws) {
         }
 
         if (msg.type === "chat-send") {
-            const room = msg.room === "group" || msg.room === "session" ? msg.room : null
+            const room = msg.room === "group" || msg.room === "session" || msg.room === "user" ? msg.room : null
             const id = typeof msg.id === "string" ? msg.id : null
             const text = typeof msg.text === "string" ? msg.text : ""
             if (!room || !id || !text.trim()) {
                 send(ws, { type: "error", message: "room, id and text required" })
+                return
+            }
+            if (room === "user" && id !== client.userId && client.role !== "ADMIN") {
+                send(ws, { type: "error", message: "Forbidden" })
                 return
             }
             const roomKey = `${room}:${id}`

@@ -1,4 +1,7 @@
 import express from "express";
+import multer from "multer";
+import fs from "fs";
+import path from "path";
 import prisma from "../utils/prisma.js";
 import { logAudit } from "../utils/audit.js";
 import { getIO } from "../ws/server.js";
@@ -6,6 +9,30 @@ import { getIO } from "../ws/server.js";
 import { authMiddleware, requireRole, getUser } from "./middleware.js";
 
 const router = express.Router();
+
+const groupImagesDir = path.join(process.cwd(), "uploads", "groups");
+fs.mkdirSync(groupImagesDir, { recursive: true });
+
+const groupImageUpload = multer({
+    storage: multer.diskStorage({
+        destination: (_req, _file, cb) => cb(null, groupImagesDir),
+        filename: (req, file, cb) => {
+            const ext = path.extname(file.originalname || "").toLowerCase() || ".png";
+            cb(null, `${req.params.id}-${Date.now()}${ext}`);
+        },
+    }),
+    limits: {
+        fileSize: Number(process.env.GROUP_IMAGE_MAX_BYTES || 5 * 1024 * 1024),
+    },
+    fileFilter: (_req, file, cb) => {
+        if (!String(file.mimetype || "").startsWith("image/")) {
+            cb(new Error("Only image uploads are allowed"));
+            return;
+        }
+
+        cb(null, true);
+    },
+});
 
 router.use(authMiddleware);
 
@@ -28,6 +55,7 @@ router.get("/", async (req, res) => {
                     id: g.id,
                     name: g.name,
                     teacherId: g.teacherId,
+                    imageUrl: group.imageUrl,
                     teacher: g.teacher.email,
                     teacherName: [g.teacher.firstName, g.teacher.lastName].filter(Boolean).join(" "),
                     sessionCount: g._count.sessions,
@@ -51,6 +79,7 @@ router.get("/", async (req, res) => {
                     id: g.id,
                     name: g.name,
                     teacherId: g.teacherId,
+                    imageUrl: group.imageUrl,
                     teacher: g.teacher.email,
                     teacherName: [g.teacher.firstName, g.teacher.lastName].filter(Boolean).join(" "),
                     sessionCount: g._count.sessions,
@@ -123,6 +152,7 @@ router.get("/:id", async (req, res) => {
             id: group.id,
             name: group.name,
             teacherId: group.teacherId,
+            imageUrl: group.imageUrl,
             teacher: group.teacher.email,
             teacherName: [group.teacher.firstName, group.teacher.lastName].filter(Boolean).join(" "),
             sessionCount: group._count.sessions,
@@ -131,6 +161,82 @@ router.get("/:id", async (req, res) => {
     } catch (e) {
         console.error("GET /groups/:id", e);
         res.status(500).json({ error: "Failed to get group" });
+    }
+});
+
+router.post("/:id/image", requireRole("TEACHER", "ADMIN"), groupImageUpload.single("file"), async (req, res) => {
+    const user = getUser(req);
+    const groupId = req.params.id;
+
+    try {
+        const group = await prisma.group.findUnique({
+            where: { id: groupId },
+        });
+
+        if (!group) {
+            return res.status(404).json({ error: "Group not found" });
+        }
+
+        const isOwner = group.teacherId === user.userId;
+        const isAdmin = user.role === "ADMIN";
+
+        if (!isOwner && !isAdmin) {
+            return res.status(403).json({ error: "Forbidden" });
+        }
+
+        if (!req.file) {
+            return res.status(400).json({ error: "file is required" });
+        }
+
+        const imageUrl = `/uploads/groups/${req.file.filename}`;
+
+        const updated = await prisma.group.update({
+            where: { id: groupId },
+            data: { imageUrl },
+        });
+
+        return res.json({
+            id: updated.id,
+            imageUrl: updated.imageUrl,
+        });
+    } catch (e) {
+        console.error("POST /groups/:id/image", e);
+        return res.status(500).json({ error: "Failed to upload group image" });
+    }
+});
+
+router.delete("/:id/image", requireRole("TEACHER", "ADMIN"), async (req, res) => {
+    const user = getUser(req);
+    const groupId = req.params.id;
+
+    try {
+        const group = await prisma.group.findUnique({
+            where: { id: groupId },
+        });
+
+        if (!group) {
+            return res.status(404).json({ error: "Group not found" });
+        }
+
+        const isOwner = group.teacherId === user.userId;
+        const isAdmin = user.role === "ADMIN";
+
+        if (!isOwner && !isAdmin) {
+            return res.status(403).json({ error: "Forbidden" });
+        }
+
+        const updated = await prisma.group.update({
+            where: { id: groupId },
+            data: { imageUrl: null },
+        });
+
+        return res.json({
+            id: updated.id,
+            imageUrl: updated.imageUrl,
+        });
+    } catch (e) {
+        console.error("DELETE /groups/:id/image", e);
+        return res.status(500).json({ error: "Failed to delete group image" });
     }
 });
 

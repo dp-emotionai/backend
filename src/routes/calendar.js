@@ -2,6 +2,7 @@ import express from "express";
 import prisma from "../utils/prisma.js";
 import authMiddleware from "../middleware/authMiddleware.js";
 import roleMiddleware from "../middleware/roleMiddleware.js";
+import { broadcastGroupEvent, broadcastSessionEvent, broadcastUserEvent } from "../ws/raw.js";
 
 const router = express.Router();
 
@@ -114,6 +115,16 @@ router.post("/events", roleMiddleware(["TEACHER", "ADMIN"]), async (req, res) =>
             },
         });
 
+        try {
+            const payload = { type: "calendar.event.created", event };
+
+            broadcastUserEvent(userId, payload);
+            if (event.groupId) broadcastGroupEvent(event.groupId, payload);
+            if (event.sessionId) broadcastSessionEvent(event.sessionId, payload);
+        } catch (wsError) {
+            console.error("POST /calendar/events broadcast error", wsError);
+        }
+
         return res.status(201).json(event);
 
     } catch (e) {
@@ -143,11 +154,57 @@ router.patch("/events/:eventId", roleMiddleware(["TEACHER", "ADMIN"]), async (re
         const {
             title,
             kind,
+            groupId,
+            sessionId,
             startsAt,
             endsAt
         } = req.body || {};
 
         const updates = {};
+
+        if (groupId !== undefined) {
+            if (groupId === null || groupId === "") {
+                updates.groupId = null;
+            } else {
+                const group = await prisma.group.findUnique({
+                    where: { id: String(groupId) },
+                });
+
+                if (!group) {
+                    return res.status(404).json({ error: "Group not found" });
+                }
+
+                if (role !== "ADMIN" && group.teacherId !== userId) {
+                    return res.status(403).json({ error: "Forbidden" });
+                }
+
+                updates.groupId = group.id;
+            }
+        }
+
+        if (sessionId !== undefined) {
+            if (sessionId === null || sessionId === "") {
+                updates.sessionId = null;
+            } else {
+                const session = await prisma.session.findUnique({
+                    where: { id: String(sessionId) },
+                });
+
+                if (!session) {
+                    return res.status(404).json({ error: "Session not found" });
+                }
+
+                if (role !== "ADMIN" && session.createdById !== userId) {
+                    return res.status(403).json({ error: "Forbidden" });
+                }
+
+                updates.sessionId = session.id;
+
+                if (groupId === undefined && !event.groupId) {
+                    updates.groupId = session.groupId;
+                }
+            }
+        }
 
         if (title !== undefined) updates.title = String(title).trim();
         if (kind !== undefined) updates.kind = String(kind);
@@ -158,6 +215,25 @@ router.patch("/events/:eventId", roleMiddleware(["TEACHER", "ADMIN"]), async (re
             where: { id: eventId },
             data: updates,
         });
+
+        try {
+            const payload = { type: "calendar.event.updated", event: updated };
+
+            broadcastUserEvent(updated.createdById, payload);
+
+            if (event.groupId) broadcastGroupEvent(event.groupId, payload);
+            if (event.sessionId) broadcastSessionEvent(event.sessionId, payload);
+
+            if (updated.groupId && updated.groupId !== event.groupId) {
+                broadcastGroupEvent(updated.groupId, payload);
+            }
+
+            if (updated.sessionId && updated.sessionId !== event.sessionId) {
+                broadcastSessionEvent(updated.sessionId, payload);
+            }
+        } catch (wsError) {
+            console.error("PATCH /calendar/events/:eventId broadcast error", wsError);
+        }
 
         return res.json(updated);
 
@@ -188,6 +264,20 @@ router.delete("/events/:eventId", roleMiddleware(["TEACHER", "ADMIN"]), async (r
         await prisma.calendarEvent.delete({
             where: { id: eventId },
         });
+
+        try {
+            const payload = {
+                type: "calendar.event.deleted",
+                eventId,
+                event,
+            };
+
+            broadcastUserEvent(event.createdById, payload);
+            if (event.groupId) broadcastGroupEvent(event.groupId, payload);
+            if (event.sessionId) broadcastSessionEvent(event.sessionId, payload);
+        } catch (wsError) {
+            console.error("DELETE /calendar/events/:eventId broadcast error", wsError);
+        }
 
         return res.json({ ok: true, id: eventId });
 

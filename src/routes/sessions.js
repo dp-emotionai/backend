@@ -4,7 +4,7 @@ import prisma from "../utils/prisma.js";
 import authMiddleware from "../middleware/authMiddleware.js";
 import roleMiddleware from "../middleware/roleMiddleware.js";
 import { getIO } from "../ws/server.js";
-import { broadcastSessionChatMessage, broadcastSessionEvent } from "../ws/raw.js";
+import { broadcastSessionChatMessage, broadcastSessionEvent, broadcastUserEvent } from "../ws/raw.js";
 const router = express.Router();
 
 function randomCode() {
@@ -472,6 +472,7 @@ router.get("/:id/messages", async (req, res) => {
                     senderRole: m.sender?.role ? String(m.sender.role).toLowerCase() : null,
                     type: m.type,
                     text: m.text,
+                    attachment: m.attachment,
                     channel: m.channel,
                     createdAt: m.createdAt,
                     editedAt: m.editedAt,
@@ -488,10 +489,26 @@ router.get("/:id/messages", async (req, res) => {
 router.post("/:id/messages", async (req, res) => {
     const userId = req.user.id;
     const sessionId = req.params.id;
-    const { type, text, channel } = req.body || {};
+    const { type, text, channel, attachment } = req.body || {};
 
-    if (!type || !text || !String(text).trim()) {
-        res.status(400).json({ error: "type and text required" });
+    const normalizedType = String(type || "").trim();
+    const normalizedText = String(text || "").trim();
+    const normalizedAttachment = attachment && typeof attachment === "object" ? attachment : null;
+
+    if (!normalizedType) {
+        res.status(400).json({ error: "type is required" });
+        return;
+    }
+
+    if (normalizedType === "file") {
+        if (!normalizedAttachment || !normalizedAttachment.storageKey || !normalizedAttachment.fileName) {
+            res.status(400).json({
+                error: "attachment.storageKey and attachment.fileName are required",
+            });
+            return;
+        }
+    } else if (!normalizedText) {
+        res.status(400).json({ error: "text is required" });
         return;
     }
 
@@ -525,8 +542,9 @@ router.post("/:id/messages", async (req, res) => {
             data: {
                 sessionId,
                 senderId: userId,
-                type,
-                text: String(text).trim(),
+                type: normalizedType,
+                text: normalizedText,
+                attachment: normalizedAttachment,
                 channel: ch,
             },
         });
@@ -545,6 +563,7 @@ router.post("/:id/messages", async (req, res) => {
             senderRole: String(req.user.role || "").toLowerCase(),
             type: msg.type,
             text: msg.text,
+            attachment: msg.attachment,
             channel: msg.channel,
             createdAt: msg.createdAt,
         };
@@ -557,6 +576,7 @@ router.post("/:id/messages", async (req, res) => {
             event: {
                 id: msg.id,
                 text: msg.text,
+                attachment: msg.attachment,
                 senderId: msg.senderId,
                 senderName,
                 senderRole: String(req.user.role || "").toLowerCase(),
@@ -927,15 +947,33 @@ router.patch("/:id", async (req, res) => {
                     select: { userId: true },
                 });
 
-                await prisma.notification.createMany({
-                    data: members.map(m => ({
-                        userId: m.userId,
-                        type: "session_started",
-                        title: "Сессия началась",
-                        body: `Сессия ${updated.title} началась`,
-                        data: { sessionId: updated.id }
+                const createdNotifications = await Promise.all(
+                    members.map(m => prisma.notification.create({
+                        data: {
+                            userId: m.userId,
+                            type: "session_started",
+                            title: "Сессия началась",
+                            body: `Сессия ${updated.title} началась`,
+                            data: { sessionId: updated.id },
+                        },
                     }))
-                });
+                );
+
+                for (const notification of createdNotifications) {
+                    broadcastUserEvent(notification.userId, {
+                        type: "notification.new",
+                        notification: {
+                            id: notification.id,
+                            type: notification.type,
+                            title: notification.title,
+                            body: notification.body,
+                            data: notification.data,
+                            readAt: notification.readAt,
+                            createdAt: notification.createdAt,
+                            isRead: false,
+                        },
+                    });
+                }
             } catch (notifErr) {
                 console.error("PATCH /sessions/:id — notifications error", notifErr);
             }
