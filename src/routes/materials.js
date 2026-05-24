@@ -5,7 +5,7 @@ import path from "path";
 import prisma from "../utils/prisma.js";
 import authMiddleware from "../middleware/authMiddleware.js";
 import roleMiddleware from "../middleware/roleMiddleware.js";
-import { broadcastGroupEvent, broadcastSessionEvent } from "../ws/raw.js";
+import { broadcastGroupEvent, broadcastSessionEvent } from "../socket/server.js";
 
 const router = express.Router();
 

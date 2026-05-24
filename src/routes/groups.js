@@ -4,7 +4,7 @@ import fs from "fs";
 import path from "path";
 import prisma from "../utils/prisma.js";
 import { logAudit } from "../utils/audit.js";
-import { getIO } from "../ws/server.js";
+import { getIO } from "../socket/server.js";
 
 import { authMiddleware, requireRole, getUser } from "./middleware.js";
 
