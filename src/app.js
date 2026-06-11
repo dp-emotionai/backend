@@ -32,6 +32,7 @@ app.use(
     cors({
         origin: [
             "https://www.konilai.space",
+            "https://elasweb.vercel.app",
             "http://localhost:3000",
         ],
         credentials: true,

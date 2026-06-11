@@ -8,7 +8,12 @@ import dns from "dns/promises"
 import prisma from "../utils/prisma.js"
 import authMiddleware from "../middleware/authMiddleware.js"
 import { OAuth2Client } from "google-auth-library"
-
+import {
+    makeStorageKey,
+    uploadBufferToR2,
+    getDownloadUrlFromR2,
+    deleteFromR2,
+} from "../utils/r2.js"
 import {
     sendNewRegistrationAdminEmail,
     sendEmailVerificationCode,
@@ -657,12 +662,6 @@ router.post("/request-code", async (req, res) => {
     }
 })
 
-/**
- * Подтверждение email
- * register -> создает юзера
- * login -> логинит
- * change_email -> меняет email
- */
 router.post("/verify-email", async (req, res) => {
     try {
         const {
@@ -1421,6 +1420,7 @@ router.get("/me", authMiddleware, async (req, res) => {
             status: true,
             organization: true,
             externalAvatarUrl: true,
+            avatarStorageKey: true,
             avatarUpdatedAt: true,
             createdAt: true,
             updatedAt: true,
@@ -1443,10 +1443,12 @@ router.get("/me", authMiddleware, async (req, res) => {
 
     if (!user) return res.status(404).json({ message: "User not found" })
 
+    const { avatarStorageKey, ...safeUser } = user
+
     res.json({
-        ...user,
+        ...safeUser,
         fullName: buildFullName(user),
-        avatarUrl: user.avatarUpdatedAt ? "/auth/avatar" : user.externalAvatarUrl,
+        avatarUrl: avatarStorageKey ? "/auth/avatar" : user.externalAvatarUrl,
         notificationSettings: user.notificationSettings,
         preferences: user.preferences,
         integrations: user.integrations
@@ -1503,17 +1505,21 @@ router.put("/me", authMiddleware, async (req, res) => {
                 status: true,
                 organization: true,
                 externalAvatarUrl: true,
+                avatarStorageKey: true,
                 avatarUpdatedAt: true,
                 createdAt: true,
                 updatedAt: true
             }
         })
 
+        const { avatarStorageKey, ...safeUser } = user
+
         res.json({
-            ...user,
+            ...safeUser,
             fullName: buildFullName(user),
-            avatarUrl: user.avatarUpdatedAt ? "/auth/avatar" : user.externalAvatarUrl
+            avatarUrl: avatarStorageKey ? "/auth/avatar" : user.externalAvatarUrl
         })
+
     } catch (e) {
         console.error("PUT /me", e)
         res.status(500).json({ message: "Update failed" })
@@ -1726,16 +1732,37 @@ router.post("/avatar", authMiddleware, upload.single("avatar"), async (req, res)
             return res.status(400).json({ message: "No file uploaded" })
         }
 
+        const oldUser = await prisma.user.findUnique({
+            where: { id: req.user.id },
+            select: { avatarStorageKey: true }
+        })
+
+        const storageKey = makeStorageKey(`avatars/${req.user.id}`, req.file.originalname)
+
+        await uploadBufferToR2({
+            key: storageKey,
+            buffer: req.file.buffer,
+            contentType: req.file.mimetype || "application/octet-stream",
+        })
+
         await prisma.user.update({
             where: { id: req.user.id },
             data: {
-                avatar: req.file.buffer,
+                avatarStorageKey: storageKey,
                 avatarMimeType: req.file.mimetype || "application/octet-stream",
-                avatarUpdatedAt: new Date()
+                avatarUpdatedAt: new Date(),
+                externalAvatarUrl: null,
             }
         })
 
-        res.json({ message: "Avatar updated" })
+        if (oldUser?.avatarStorageKey && oldUser.avatarStorageKey !== storageKey) {
+            await deleteFromR2(oldUser.avatarStorageKey)
+        }
+
+        res.json({
+            message: "Avatar updated",
+            avatarUrl: "/auth/avatar"
+        })
     } catch (e) {
         console.error("POST /avatar", e)
         res.status(500).json({ message: "Avatar upload failed" })
@@ -1746,19 +1773,31 @@ router.get("/avatar", authMiddleware, async (req, res) => {
     try {
         const user = await prisma.user.findUnique({
             where: { id: req.user.id },
-            select: { avatar: true, avatarMimeType: true }
+            select: {
+                avatarStorageKey: true,
+                externalAvatarUrl: true,
+            }
         })
 
-        if (!user || !user.avatar) return res.status(404).json({ message: "No avatar" })
+        if (!user) {
+            return res.status(404).json({ message: "User not found" })
+        }
 
-        res.set("Content-Type", user.avatarMimeType || "application/octet-stream")
-        res.send(user.avatar)
+        if (user.avatarStorageKey) {
+            const url = await getDownloadUrlFromR2(user.avatarStorageKey)
+            return res.redirect(url)
+        }
+
+        if (user.externalAvatarUrl) {
+            return res.redirect(user.externalAvatarUrl)
+        }
+
+        return res.status(404).json({ message: "No avatar" })
     } catch (e) {
         console.error("GET /avatar", e)
         res.status(500).json({ message: "Failed to get avatar" })
     }
 })
-
 router.post("/logout-all", authMiddleware, async (req, res) => {
     await prisma.refreshToken.deleteMany({
         where: { userId: req.user.id }

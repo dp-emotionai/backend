@@ -33,7 +33,7 @@ model User {
   organization String?
   inviteCode   String?
 
-  avatar            Bytes?
+  avatarStorageKey  String?
   avatarMimeType    String?
   avatarUpdatedAt   DateTime?
   externalAvatarUrl String?

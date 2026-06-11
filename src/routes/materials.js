@@ -1,29 +1,20 @@
 import express from "express";
 import multer from "multer";
-import fs from "fs";
-import path from "path";
 import prisma from "../utils/prisma.js";
 import authMiddleware from "../middleware/authMiddleware.js";
 import roleMiddleware from "../middleware/roleMiddleware.js";
 import { broadcastGroupEvent, broadcastSessionEvent } from "../socket/server.js";
+import {
+    makeStorageKey,
+    uploadBufferToR2,
+    getDownloadUrlFromR2,
+    deleteFromR2,
+} from "../utils/r2.js";
 
 const router = express.Router();
 
-const materialsUploadDir = path.join(process.cwd(), "uploads", "materials");
-fs.mkdirSync(materialsUploadDir, { recursive: true });
-
 const upload = multer({
-    storage: multer.diskStorage({
-        destination: (_req, _file, cb) => cb(null, materialsUploadDir),
-        filename: (_req, file, cb) => {
-            const safeName = String(file.originalname || "file")
-                .replace(/[^a-zA-Z0-9а-яА-ЯёЁ._-]+/g, "_")
-                .slice(-120);
-
-            const unique = `${Date.now()}-${Math.round(Math.random() * 1e9)}`;
-            cb(null, `${unique}-${safeName}`);
-        },
-    }),
+    storage: multer.memoryStorage(),
     limits: {
         fileSize: Number(process.env.MATERIAL_UPLOAD_MAX_BYTES || 25 * 1024 * 1024),
     },
@@ -47,8 +38,16 @@ router.post("/upload", roleMiddleware(["TEACHER", "ADMIN"]), upload.single("file
             return res.status(400).json({ error: "file is required" });
         }
 
+        const storageKey = makeStorageKey("materials", req.file.originalname);
+
+        await uploadBufferToR2({
+            key: storageKey,
+            buffer: req.file.buffer,
+            contentType: req.file.mimetype,
+        });
+
         return res.status(201).json({
-            storageKey: `materials/${req.file.filename}`,
+            storageKey,
             fileName: req.file.originalname,
             mimeType: req.file.mimetype,
             size: req.file.size,
@@ -206,6 +205,8 @@ router.delete("/:materialId", roleMiddleware(["TEACHER", "ADMIN"]), async (req, 
         if (role !== "ADMIN" && material.ownerId !== userId) {
             return res.status(403).json({ error: "Forbidden" });
         }
+
+        await deleteFromR2(material.storageKey);
 
         await prisma.material.delete({
             where: { id: materialId },
@@ -372,6 +373,7 @@ router.delete("/:materialId/assignments/:assignmentId", roleMiddleware(["TEACHER
         await prisma.materialAssignment.delete({
             where: { id: assignmentId },
         });
+
         try {
             const event = {
                 type: "material.unassigned",
@@ -386,6 +388,7 @@ router.delete("/:materialId/assignments/:assignmentId", roleMiddleware(["TEACHER
         } catch (wsError) {
             console.error("DELETE /materials/:materialId/assignments/:assignmentId broadcast error", wsError);
         }
+
         return res.json({ ok: true, id: assignmentId });
     } catch (e) {
         console.error("DELETE /materials/:materialId/assignments/:assignmentId", e);
@@ -429,16 +432,16 @@ router.get("/groups/:groupId/materials", async (req, res) => {
                 groupId,
                 OR: [
                     { visibleFrom: null },
-                    { visibleFrom: { lte: now } }
+                    { visibleFrom: { lte: now } },
                 ],
                 AND: [
                     {
                         OR: [
                             { visibleTo: null },
-                            { visibleTo: { gte: now } }
-                        ]
-                    }
-                ]
+                            { visibleTo: { gte: now } },
+                        ],
+                    },
+                ],
             },
             include: {
                 material: true,
@@ -487,9 +490,9 @@ router.get("/sessions/:sessionId/materials", async (req, res) => {
                 where: {
                     groupId_userId: {
                         groupId: session.groupId,
-                        userId
-                    }
-                }
+                        userId,
+                    },
+                },
             });
             isMember = !!gm;
         }
@@ -506,22 +509,22 @@ router.get("/sessions/:sessionId/materials", async (req, res) => {
                     {
                         OR: [
                             { sessionId },
-                            { groupId: session.groupId }
-                        ]
+                            { groupId: session.groupId },
+                        ],
                     },
                     {
                         OR: [
                             { visibleFrom: null },
-                            { visibleFrom: { lte: now } }
-                        ]
+                            { visibleFrom: { lte: now } },
+                        ],
                     },
                     {
                         OR: [
                             { visibleTo: null },
-                            { visibleTo: { gte: now } }
-                        ]
-                    }
-                ]
+                            { visibleTo: { gte: now } },
+                        ],
+                    },
+                ],
             },
             include: {
                 material: true,
@@ -565,16 +568,16 @@ router.get("/student/materials", roleMiddleware(["STUDENT"]), async (req, res) =
                 groupId: { in: groupIds },
                 OR: [
                     { visibleFrom: null },
-                    { visibleFrom: { lte: now } }
+                    { visibleFrom: { lte: now } },
                 ],
                 AND: [
                     {
                         OR: [
                             { visibleTo: null },
-                            { visibleTo: { gte: now } }
-                        ]
-                    }
-                ]
+                            { visibleTo: { gte: now } },
+                        ],
+                    },
+                ],
             },
             include: {
                 material: true,
@@ -619,12 +622,10 @@ router.get("/:materialId/download", async (req, res) => {
 
         let hasAccess = false;
 
-        // teacher/admin/owner — сразу доступ
         if (isOwner || isAdmin) {
             hasAccess = true;
         }
 
-        // если студент — проверяем assignment
         if (!hasAccess && role === "STUDENT") {
             const memberships = await prisma.groupMember.findMany({
                 where: { userId },
@@ -633,16 +634,36 @@ router.get("/:materialId/download", async (req, res) => {
 
             const groupIds = memberships.map(m => m.groupId);
 
+            const now = new Date();
+
             const assignment = await prisma.materialAssignment.findFirst({
                 where: {
                     materialId,
-                    OR: [
-                        { groupId: { in: groupIds } },
-                        { session: {
-                                groupId: { in: groupIds }
-                            }}
-                    ]
-                }
+                    AND: [
+                        {
+                            OR: [
+                                { groupId: { in: groupIds } },
+                                {
+                                    session: {
+                                        groupId: { in: groupIds },
+                                    },
+                                },
+                            ],
+                        },
+                        {
+                            OR: [
+                                { visibleFrom: null },
+                                { visibleFrom: { lte: now } },
+                            ],
+                        },
+                        {
+                            OR: [
+                                { visibleTo: null },
+                                { visibleTo: { gte: now } },
+                            ],
+                        },
+                    ],
+                },
             });
 
             if (assignment) {
@@ -654,8 +675,11 @@ router.get("/:materialId/download", async (req, res) => {
             return res.status(403).json({ error: "Forbidden" });
         }
 
+        const downloadUrl = await getDownloadUrlFromR2(material.storageKey, material.fileName);
+
         return res.json({
-            downloadUrl: `/uploads/${material.storageKey}`,
+            downloadUrl,
+            url: downloadUrl,
             fileName: material.fileName,
         });
     } catch (e) {
