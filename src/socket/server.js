@@ -309,12 +309,52 @@ export function initSocket(server) {
             })
         })
 
+        function getSignalRoom(data = {}) {
+            return data.roomId || data.roomKey || (data.sessionId ? `session:${data.sessionId}` : null)
+        }
+
         socket.on("video-signal", (data = {}) => {
-            const roomId = data.roomId || data.roomKey
+            const roomId = getSignalRoom(data)
 
             if (!roomId) return
 
             socket.to(roomId).emit("video-signal", {
+                ...data,
+                from: socket.id,
+                userId: user.id,
+            })
+        })
+
+        socket.on("webrtc-offer", (data = {}) => {
+            const roomId = getSignalRoom(data)
+
+            if (!roomId) return
+
+            socket.to(roomId).emit("webrtc-offer", {
+                ...data,
+                from: socket.id,
+                userId: user.id,
+            })
+        })
+
+        socket.on("webrtc-answer", (data = {}) => {
+            const roomId = getSignalRoom(data)
+
+            if (!roomId) return
+
+            socket.to(roomId).emit("webrtc-answer", {
+                ...data,
+                from: socket.id,
+                userId: user.id,
+            })
+        })
+
+        socket.on("webrtc-ice", (data = {}) => {
+            const roomId = getSignalRoom(data)
+
+            if (!roomId) return
+
+            socket.to(roomId).emit("webrtc-ice", {
                 ...data,
                 from: socket.id,
                 userId: user.id,

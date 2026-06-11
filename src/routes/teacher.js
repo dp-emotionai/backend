@@ -25,7 +25,6 @@ async function ensureUniqueCode() {
     return "ELAS-" + Date.now().toString(36).toUpperCase().slice(-4);
 }
 
-// GET /api/teacher/groups — teacher's groups
 router.get("/groups", async (req, res) => {
     try {
         const userId = req.user.id;

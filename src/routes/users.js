@@ -4,7 +4,6 @@ import authMiddleware from "../middleware/authMiddleware.js";
 
 const router = express.Router();
 
-// получить пользователя по id
 router.get("/:id", authMiddleware, async (req, res) => {
     const user = await prisma.user.findUnique({
         where: { id: req.params.id },
@@ -29,7 +28,6 @@ router.get("/:id", authMiddleware, async (req, res) => {
     });
 });
 
-// обновить пользователя
 router.put("/update", authMiddleware, async (req, res) => {
     const { email } = req.body;
 
