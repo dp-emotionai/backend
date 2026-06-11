@@ -1,26 +1,21 @@
 import express from "express";
 import multer from "multer";
-import fs from "fs";
-import path from "path";
 import prisma from "../utils/prisma.js";
 import { logAudit } from "../utils/audit.js";
 import { getIO } from "../socket/server.js";
+import {
+    makeStorageKey,
+    uploadBufferToR2,
+    getDownloadUrlFromR2,
+    deleteFromR2,
+} from "../utils/r2.js";
 
 import { authMiddleware, requireRole, getUser } from "./middleware.js";
 
 const router = express.Router();
 
-const groupImagesDir = path.join(process.cwd(), "uploads", "groups");
-fs.mkdirSync(groupImagesDir, { recursive: true });
-
 const groupImageUpload = multer({
-    storage: multer.diskStorage({
-        destination: (_req, _file, cb) => cb(null, groupImagesDir),
-        filename: (req, file, cb) => {
-            const ext = path.extname(file.originalname || "").toLowerCase() || ".png";
-            cb(null, `${req.params.id}-${Date.now()}${ext}`);
-        },
-    }),
+    storage: multer.memoryStorage(),
     limits: {
         fileSize: Number(process.env.GROUP_IMAGE_MAX_BYTES || 5 * 1024 * 1024),
     },
@@ -33,6 +28,10 @@ const groupImageUpload = multer({
         cb(null, true);
     },
 });
+
+const getGroupImageUrl = (group) => {
+    return group?.imageUrl ? `/api/groups/${group.id}/image` : null;
+};
 
 router.use(authMiddleware);
 
@@ -55,7 +54,7 @@ router.get("/", async (req, res) => {
                     id: g.id,
                     name: g.name,
                     teacherId: g.teacherId,
-                    imageUrl: g.imageUrl,
+                    imageUrl: getGroupImageUrl(g),
                     teacher: g.teacher.email,
                     teacherName: [g.teacher.firstName, g.teacher.lastName].filter(Boolean).join(" "),
                     sessionCount: g._count.sessions,
@@ -79,7 +78,7 @@ router.get("/", async (req, res) => {
                     id: g.id,
                     name: g.name,
                     teacherId: g.teacherId,
-                    imageUrl: g.imageUrl,
+                    imageUrl: getGroupImageUrl(g),
                     teacher: g.teacher.email,
                     teacherName: [g.teacher.firstName, g.teacher.lastName].filter(Boolean).join(" "),
                     sessionCount: g._count.sessions,
@@ -105,6 +104,7 @@ router.get("/", async (req, res) => {
                 id: m.group.id,
                 name: m.group.name,
                 teacherId: m.group.teacherId,
+                imageUrl: getGroupImageUrl(m.group),
                 teacher: m.group.teacher.email,
                 teacherName: [m.group.teacher.firstName, m.group.teacher.lastName].filter(Boolean).join(" "),
                 sessionCount: m.group._count.sessions,
@@ -152,7 +152,7 @@ router.get("/:id", async (req, res) => {
             id: group.id,
             name: group.name,
             teacherId: group.teacherId,
-            imageUrl: group.imageUrl,
+            imageUrl: getGroupImageUrl(group),
             teacher: group.teacher.email,
             teacherName: [group.teacher.firstName, group.teacher.lastName].filter(Boolean).join(" "),
             sessionCount: group._count.sessions,
@@ -188,20 +188,74 @@ router.post("/:id/image", requireRole("TEACHER", "ADMIN"), groupImageUpload.sing
             return res.status(400).json({ error: "file is required" });
         }
 
-        const imageUrl = `/uploads/groups/${req.file.filename}`;
+        const storageKey = makeStorageKey(`groups/${groupId}`, req.file.originalname);
+
+        await uploadBufferToR2({
+            key: storageKey,
+            buffer: req.file.buffer,
+            contentType: req.file.mimetype || "application/octet-stream",
+        });
 
         const updated = await prisma.group.update({
             where: { id: groupId },
-            data: { imageUrl },
+            data: { imageUrl: storageKey },
         });
+
+        if (group.imageUrl && group.imageUrl !== storageKey && !group.imageUrl.startsWith("/uploads/") && !group.imageUrl.startsWith("http")) {
+            await deleteFromR2(group.imageUrl);
+        }
 
         return res.json({
             id: updated.id,
-            imageUrl: updated.imageUrl,
+            imageUrl: getGroupImageUrl(updated),
         });
     } catch (e) {
         console.error("POST /groups/:id/image", e);
         return res.status(500).json({ error: "Failed to upload group image" });
+    }
+});
+
+router.get("/:id/image", async (req, res) => {
+    const user = getUser(req);
+    const groupId = req.params.id;
+
+    try {
+        const group = await prisma.group.findUnique({
+            where: { id: groupId },
+        });
+
+        if (!group || !group.imageUrl) {
+            return res.status(404).json({ error: "Group image not found" });
+        }
+
+        const isOwner = group.teacherId === user.userId;
+        const isAdmin = user.role === "ADMIN";
+
+        const membership = await prisma.groupMember.findUnique({
+            where: {
+                groupId_userId: {
+                    groupId,
+                    userId: user.userId,
+                },
+            },
+        });
+
+        const isMember = !!membership;
+
+        if (!isOwner && !isAdmin && !isMember) {
+            return res.status(403).json({ error: "Forbidden" });
+        }
+
+        if (group.imageUrl.startsWith("/uploads/") || group.imageUrl.startsWith("http")) {
+            return res.redirect(group.imageUrl);
+        }
+
+        const url = await getDownloadUrlFromR2(group.imageUrl);
+
+        return res.redirect(url);
+    } catch (e) {
+        console.error("GET /groups/:id/image", e);
+        return res.status(500).json({ error: "Failed to get group image" });
     }
 });
 
@@ -223,6 +277,10 @@ router.delete("/:id/image", requireRole("TEACHER", "ADMIN"), async (req, res) =>
 
         if (!isOwner && !isAdmin) {
             return res.status(403).json({ error: "Forbidden" });
+        }
+
+        if (group.imageUrl && !group.imageUrl.startsWith("/uploads/") && !group.imageUrl.startsWith("http")) {
+            await deleteFromR2(group.imageUrl);
         }
 
         const updated = await prisma.group.update({
@@ -608,7 +666,10 @@ router.patch("/:id", requireRole("TEACHER", "ADMIN"), async (req, res) => {
             data: name !== undefined ? { name: String(name).trim() } : {},
         });
 
-        res.json(group);
+        res.json({
+            ...group,
+            imageUrl: getGroupImageUrl(group),
+        });
     } catch (e) {
         console.error("PATCH /groups/:id", e);
         res.status(500).json({ error: "Failed to update group" });

@@ -42,7 +42,6 @@ app.use(express.json({ limit: "100kb" }))
 app.use(express.urlencoded({ extended: true, limit: "100kb" }))
 app.use(cookieParser())
 app.use(rateLimit)
-app.use("/uploads", express.static("uploads"))
 app.use("/api/materials", materialsRouter);
 app.use("/api/calendar", calendarRouter);
 app.use("/api/notifications", notificationsRouter);

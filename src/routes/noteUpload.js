@@ -1,8 +1,11 @@
 import express from "express";
 import multer from "multer";
-import cloudinary from "../utils/cloudinary.js";
 import authMiddleware from "../middleware/authMiddleware.js";
 import prisma from "../utils/prisma.js";
+import {
+    makeStorageKey,
+    uploadBufferToR2,
+} from "../utils/r2.js";
 
 const router = express.Router();
 
@@ -25,10 +28,14 @@ router.post("/", authMiddleware, upload.single("file"), async (req, res) => {
             });
         }
 
-        if (noteId) {
+        const cleanNoteId = noteId && String(noteId).trim()
+            ? String(noteId).trim()
+            : null;
+
+        if (cleanNoteId) {
             const note = await prisma.note.findFirst({
                 where: {
-                    id: String(noteId),
+                    id: cleanNoteId,
                     userId: req.user.id
                 }
             });
@@ -42,28 +49,29 @@ router.post("/", authMiddleware, upload.single("file"), async (req, res) => {
 
         const file = req.file;
 
-        const base64 = file.buffer.toString("base64");
+        const storageKey = makeStorageKey(`notes/${req.user.id}`, file.originalname);
 
-        const result = await cloudinary.uploader.upload(
-            `data:${file.mimetype};base64,${base64}`,
-            {
-                folder: "notes",
-                resource_type: "auto"
-            }
-        );
+        await uploadBufferToR2({
+            key: storageKey,
+            buffer: file.buffer,
+            contentType: file.mimetype || "application/octet-stream",
+        });
 
         const document = await prisma.document.create({
             data: {
                 filename: file.originalname,
-                url: result.secure_url,
+                url: storageKey,
                 type: file.mimetype,
                 size: file.size,
                 userId: req.user.id,
-                noteId: noteId ? String(noteId) : null
+                noteId: cleanNoteId
             }
         });
 
-        res.json(document);
+        res.json({
+            ...document,
+            downloadUrl: `/documents/${document.id}/download`
+        });
     } catch (error) {
         console.error("NOTE UPLOAD ERROR:", error);
 
