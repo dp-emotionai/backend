@@ -201,7 +201,7 @@ router.post("/:id/image", requireRole("TEACHER", "ADMIN"), groupImageUpload.sing
             data: { imageUrl: storageKey },
         });
 
-        if (group.imageUrl && group.imageUrl !== storageKey && !group.imageUrl.startsWith("/uploads/") && !group.imageUrl.startsWith("http")) {
+        if (group.imageUrl && group.imageUrl !== storageKey) {
             await deleteFromR2(group.imageUrl);
         }
 
@@ -246,10 +246,6 @@ router.get("/:id/image", async (req, res) => {
             return res.status(403).json({ error: "Forbidden" });
         }
 
-        if (group.imageUrl.startsWith("/uploads/") || group.imageUrl.startsWith("http")) {
-            return res.redirect(group.imageUrl);
-        }
-
         const url = await getDownloadUrlFromR2(group.imageUrl);
 
         return res.redirect(url);
@@ -279,7 +275,7 @@ router.delete("/:id/image", requireRole("TEACHER", "ADMIN"), async (req, res) =>
             return res.status(403).json({ error: "Forbidden" });
         }
 
-        if (group.imageUrl && !group.imageUrl.startsWith("/uploads/") && !group.imageUrl.startsWith("http")) {
+        if (group.imageUrl) {
             await deleteFromR2(group.imageUrl);
         }
 
