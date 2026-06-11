@@ -1,30 +1,31 @@
 import express from "express";
 import multer from "multer";
-import { CloudinaryStorage } from "multer-storage-cloudinary";
-import cloudinary from "../utils/cloudinary.js";
 import prisma from "../utils/prisma.js";
 import authMiddleware from "../middleware/authMiddleware.js";
+import {
+    makeStorageKey,
+    uploadBufferToR2,
+    getDownloadUrlFromR2,
+    deleteFromR2,
+} from "../utils/r2.js";
 
 const router = express.Router();
 
-/* ===============================
-   CLOUDINARY STORAGE
-================================ */
-
-const storage = new CloudinaryStorage({
-    cloudinary,
-    params: async (req, file) => {
-        return {
-            folder: "elas_documents",
-            resource_type: "auto",
-            public_id: Date.now() + "-" + file.originalname,
-        };
-    },
+const upload = multer({
+    storage: multer.memoryStorage(),
+    limits: { fileSize: 5 * 1024 * 1024 },
 });
 
-const upload = multer({
-    storage,
-    limits: { fileSize: 5 * 1024 * 1024 },
+const mapDocument = (document) => ({
+    id: document.id,
+    filename: document.filename,
+    url: `/documents/${document.id}/download`,
+    downloadUrl: `/documents/${document.id}/download`,
+    type: document.type,
+    size: document.size,
+    userId: document.userId,
+    noteId: document.noteId,
+    createdAt: document.createdAt,
 });
 
 router.post(
@@ -41,10 +42,14 @@ router.post(
                 });
             }
 
-            if (noteId && String(noteId).trim()) {
+            const cleanNoteId = noteId && String(noteId).trim()
+                ? String(noteId).trim()
+                : null;
+
+            if (cleanNoteId) {
                 const note = await prisma.note.findFirst({
                     where: {
-                        id: String(noteId).trim(),
+                        id: cleanNoteId,
                         userId: req.user.id,
                     },
                 });
@@ -56,18 +61,26 @@ router.post(
                 }
             }
 
+            const storageKey = makeStorageKey(`documents/${req.user.id}`, req.file.originalname);
+
+            await uploadBufferToR2({
+                key: storageKey,
+                buffer: req.file.buffer,
+                contentType: req.file.mimetype || "application/octet-stream",
+            });
+
             const document = await prisma.document.create({
                 data: {
                     filename: req.file.originalname,
-                    url: req.file.path,
+                    url: storageKey,
                     type: req.file.mimetype,
                     size: req.file.size,
                     userId: req.user.id,
-                    noteId: noteId && String(noteId).trim() ? String(noteId).trim() : null,
+                    noteId: cleanNoteId,
                 },
             });
 
-            res.status(201).json(document);
+            res.status(201).json(mapDocument(document));
 
         } catch (error) {
             console.error("UPLOAD ERROR:", error);
@@ -93,12 +106,41 @@ router.get("/", authMiddleware, async (req, res) => {
             take: 200,
         });
 
-        res.json(documents);
+        res.json(documents.map(mapDocument));
 
     } catch (error) {
         console.error(error);
         res.status(500).json({
             error: "Failed to fetch documents",
+        });
+    }
+});
+
+router.get("/:id/download", authMiddleware, async (req, res) => {
+    try {
+        const documentId = req.params.id;
+
+        const document = await prisma.document.findFirst({
+            where: {
+                id: documentId,
+                userId: req.user.id,
+            },
+        });
+
+        if (!document) {
+            return res.status(404).json({
+                message: "Document not found",
+            });
+        }
+
+        const downloadUrl = await getDownloadUrlFromR2(document.url, document.filename);
+
+        return res.redirect(downloadUrl);
+
+    } catch (error) {
+        console.error("DOWNLOAD ERROR:", error);
+        res.status(500).json({
+            error: "Failed to download document",
         });
     }
 });
@@ -120,14 +162,7 @@ router.delete("/:id", authMiddleware, async (req, res) => {
             });
         }
 
-        const parts = document.url.split("/");
-        const filename = parts[parts.length - 1];
-        const publicId = filename.split(".")[0];
-
-        await cloudinary.uploader.destroy(
-            "elas_documents/" + publicId,
-            { resource_type: "auto" }
-        );
+        await deleteFromR2(document.url);
 
         await prisma.document.delete({
             where: { id: document.id },
