@@ -1448,7 +1448,7 @@ router.get("/me", authMiddleware, async (req, res) => {
     res.json({
         ...safeUser,
         fullName: buildFullName(user),
-        avatarUrl: avatarStorageKey ? "/auth/avatar" : user.externalAvatarUrl,
+        avatarUrl: avatarStorageKey ? "/api/auth/avatar" : user.externalAvatarUrl,
         notificationSettings: user.notificationSettings,
         preferences: user.preferences,
         integrations: user.integrations
@@ -1517,7 +1517,7 @@ router.put("/me", authMiddleware, async (req, res) => {
         res.json({
             ...safeUser,
             fullName: buildFullName(user),
-            avatarUrl: avatarStorageKey ? "/auth/avatar" : user.externalAvatarUrl
+            avatarUrl: avatarStorageKey ? "/api/auth/avatar" : user.externalAvatarUrl
         })
 
     } catch (e) {
@@ -1761,7 +1761,7 @@ router.post("/avatar", authMiddleware, upload.single("avatar"), async (req, res)
 
         res.json({
             message: "Avatar updated",
-            avatarUrl: "/auth/avatar"
+            avatarUrl: "/api/auth/avatar"
         })
     } catch (e) {
         console.error("POST /avatar", e)

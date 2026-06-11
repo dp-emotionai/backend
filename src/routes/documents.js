@@ -19,8 +19,8 @@ const upload = multer({
 const mapDocument = (document) => ({
     id: document.id,
     filename: document.filename,
-    url: `/documents/${document.id}/download`,
-    downloadUrl: `/documents/${document.id}/download`,
+    url: `/api/documents/${document.id}/download`,
+    downloadUrl: `/api/documents/${document.id}/download`,
     type: document.type,
     size: document.size,
     userId: document.userId,
