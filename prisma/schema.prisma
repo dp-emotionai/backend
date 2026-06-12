@@ -49,6 +49,7 @@ model User {
   sessionEmotionSamples SessionEmotionSample[]
 
   materials                Material[]
+  materialsCreatedAssignments MaterialAssignment[] @relation("MaterialAssignmentCreator")
   calendarEventsCreated    CalendarEvent[]
   notifications            Notification[]
   sessionParticipantStates SessionParticipantState[]
@@ -584,10 +585,16 @@ model Material {
   id          String  @id @default(uuid())
   title       String
   description String?
+
+  kind String @default("file")
+
   fileName    String
   mimeType    String?
   storageKey  String
   size        Int?
+
+  thumbnailStorageKey String?
+  durationSec         Int?
 
   ownerId String
   owner   User   @relation(fields: [ownerId], references: [id], onDelete: Cascade)
@@ -596,6 +603,9 @@ model Material {
   updatedAt DateTime @updatedAt
 
   assignments MaterialAssignment[]
+  @@index([ownerId])
+  @@index([kind])
+  @@index([createdAt])
 }
 
 model MaterialAssignment {
@@ -606,15 +616,20 @@ model MaterialAssignment {
   visibleFrom DateTime?
   visibleTo   DateTime?
 
+  assignedById String?
+
   material Material @relation(fields: [materialId], references: [id], onDelete: Cascade)
   group    Group?   @relation(fields: [groupId], references: [id], onDelete: Cascade)
   session  Session? @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  assignedBy User? @relation("MaterialAssignmentCreator", fields: [assignedById], references: [id], onDelete: SetNull)
 
   createdAt DateTime @default(now())
 
   @@index([materialId])
   @@index([groupId])
   @@index([sessionId])
+  @@index([assignedById])
 }
 
 model CalendarEvent {
