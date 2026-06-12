@@ -7,7 +7,7 @@ import { broadcastGroupEvent, broadcastSessionEvent } from "../socket/server.js"
 import {
     makeStorageKey,
     uploadBufferToR2,
-    getDownloadUrlFromR2,
+    getObjectFromR2,
     deleteFromR2,
 } from "../utils/r2.js";
 
@@ -375,43 +375,12 @@ router.post("/upload-image", roleMiddleware(["TEACHER", "ADMIN"]), upload.single
 });
 
 router.get("/questions/:questionId/image", async (req, res) => {
-    try {
-        const question = await prisma.testQuestion.findUnique({
-            where: { id: req.params.questionId },
-            include: {
-                test: {
-                    include: {
-                        session: true,
+        try {
+            const question =
+                await prisma.testQuestion.findUnique({
+                    where: {
+                        id: req.params.questionId,
                     },
-                },
-            },
-        });
-
-        if (!question || !question.imageStorageKey) {
-            return res.status(404).json({ error: "Image not found" });
-        }
-
-        const allowed = canManageTest(req, question.test) || await canStudentAccessTest(req, question.test);
-
-        if (!allowed) {
-            return res.status(403).json({ error: "Forbidden" });
-        }
-
-        const url = await getDownloadUrlFromR2(question.imageStorageKey);
-
-        return res.redirect(url);
-    } catch (e) {
-        console.error("GET /tests/questions/:questionId/image", e);
-        return res.status(500).json({ error: "Failed to get image" });
-    }
-});
-
-router.get("/options/:optionId/image", async (req, res) => {
-    try {
-        const option = await prisma.testOption.findUnique({
-            where: { id: req.params.optionId },
-            include: {
-                question: {
                     include: {
                         test: {
                             include: {
@@ -419,28 +388,177 @@ router.get("/options/:optionId/image", async (req, res) => {
                             },
                         },
                     },
-                },
-            },
-        });
+                });
 
-        if (!option || !option.imageStorageKey) {
-            return res.status(404).json({ error: "Image not found" });
+            if (
+                !question ||
+                !question.imageStorageKey
+            ) {
+                return res
+                    .status(404)
+                    .json({
+                        error: "Image not found",
+                    });
+            }
+
+            const allowed =
+                canManageTest(req, question.test) ||
+                (await canStudentAccessTest(
+                    req,
+                    question.test
+                ));
+
+            if (!allowed) {
+                return res
+                    .status(403)
+                    .json({
+                        error: "Forbidden",
+                    });
+            }
+
+            const object = await getObjectFromR2(
+                question.imageStorageKey
+            );
+
+            if (!object.Body) {
+                return res
+                    .status(404)
+                    .json({
+                        error: "Image body not found",
+                    });
+            }
+
+            const bytes =
+                await object.Body.transformToByteArray();
+
+            res.setHeader(
+                "Content-Type",
+                object.ContentType || "image/jpeg"
+            );
+
+            res.setHeader(
+                "Cache-Control",
+                "private, max-age=300"
+            );
+
+            if (object.ETag) {
+                res.setHeader("ETag", object.ETag);
+            }
+
+            return res
+                .status(200)
+                .send(Buffer.from(bytes));
+        } catch (e) {
+            console.error(
+                "GET /tests/questions/:questionId/image",
+                e
+            );
+
+            return res
+                .status(500)
+                .json({
+                    error:
+                        "Failed to get question image",
+                });
         }
-
-        const allowed = canManageTest(req, option.question.test) || await canStudentAccessTest(req, option.question.test);
-
-        if (!allowed) {
-            return res.status(403).json({ error: "Forbidden" });
-        }
-
-        const url = await getDownloadUrlFromR2(option.imageStorageKey);
-
-        return res.redirect(url);
-    } catch (e) {
-        console.error("GET /tests/options/:optionId/image", e);
-        return res.status(500).json({ error: "Failed to get image" });
     }
-});
+);
+
+router.get("/options/:optionId/image", async (req, res) => {
+        try {
+            const option =
+                await prisma.testOption.findUnique({
+                    where: {
+                        id: req.params.optionId,
+                    },
+                    include: {
+                        question: {
+                            include: {
+                                test: {
+                                    include: {
+                                        session: true,
+                                    },
+                                },
+                            },
+                        },
+                    },
+                });
+
+            if (
+                !option ||
+                !option.imageStorageKey
+            ) {
+                return res
+                    .status(404)
+                    .json({
+                        error: "Image not found",
+                    });
+            }
+
+            const test = option.question.test;
+
+            const allowed =
+                canManageTest(req, test) ||
+                (await canStudentAccessTest(
+                    req,
+                    test
+                ));
+
+            if (!allowed) {
+                return res
+                    .status(403)
+                    .json({
+                        error: "Forbidden",
+                    });
+            }
+
+            const object = await getObjectFromR2(
+                option.imageStorageKey
+            );
+
+            if (!object.Body) {
+                return res
+                    .status(404)
+                    .json({
+                        error: "Image body not found",
+                    });
+            }
+
+            const bytes =
+                await object.Body.transformToByteArray();
+
+            res.setHeader(
+                "Content-Type",
+                object.ContentType || "image/jpeg"
+            );
+
+            res.setHeader(
+                "Cache-Control",
+                "private, max-age=300"
+            );
+
+            if (object.ETag) {
+                res.setHeader("ETag", object.ETag);
+            }
+
+            return res
+                .status(200)
+                .send(Buffer.from(bytes));
+        } catch (e) {
+            console.error(
+                "GET /tests/options/:optionId/image",
+                e
+            );
+
+            return res
+                .status(500)
+                .json({
+                    error:
+                        "Failed to get option image",
+                });
+        }
+    }
+);
 
 router.get("/", roleMiddleware(["TEACHER", "ADMIN"]), async (req, res) => {
     try {
