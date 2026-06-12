@@ -51,6 +51,17 @@ const normalizeDate = (value) => {
     return Number.isNaN(date.getTime()) ? null : date;
 };
 
+const normalizeFileName = (fileName) => {
+    const raw = normalizeString(fileName) || "attachment";
+
+    try {
+        const decoded = Buffer.from(raw, "latin1").toString("utf8");
+        return decoded.includes("�") ? raw : decoded;
+    } catch {
+        return raw;
+    }
+};
+
 const mapUser = (user) => {
     if (!user) return null;
 
@@ -670,6 +681,47 @@ router.get("/submissions/:submissionId/attachment", async (req, res) => {
     }
 });
 
+router.get("/submissions/:submissionId/attachment-url", async (req, res) => {
+    try {
+        const submission = await prisma.taskSubmission.findUnique({
+            where: { id: req.params.submissionId },
+            include: {
+                task: {
+                    include: getTaskInclude(),
+                },
+            },
+        });
+
+        if (!submission || !submission.attachmentStorageKey) {
+            return res.status(404).json({ error: "Attachment not found" });
+        }
+
+        const userId = getAuthUserId(req);
+        const role = req.user.role;
+        const isOwner = submission.studentId === userId;
+        const isManager = canManageTask(req, submission.task);
+
+        if (role !== "ADMIN" && !isOwner && !isManager) {
+            return res.status(403).json({ error: "Forbidden" });
+        }
+
+        const url = await getDownloadUrlFromR2(
+            submission.attachmentStorageKey,
+            submission.attachmentFileName
+        );
+
+        return res.json({
+            url,
+            fileName: submission.attachmentFileName,
+            mimeType: submission.attachmentMimeType,
+            size: submission.attachmentSize,
+        });
+    } catch (e) {
+        console.error("GET /tasks/submissions/:submissionId/attachment-url", e);
+        return res.status(500).json({ error: "Failed to get attachment url" });
+    }
+});
+
 router.get("/:taskId", async (req, res) => {
     try {
         const task = await prisma.task.findUnique({
@@ -915,8 +967,15 @@ router.post("/:taskId/submit", roleMiddleware(["STUDENT"]), upload.single("attac
             },
         });
 
+        let cleanFileName = null;
+
         if (req.file) {
-            uploadedStorageKey = makeStorageKey(`tasks/${taskId}/submissions/${userId}`, req.file.originalname);
+            cleanFileName = normalizeFileName(req.file.originalname);
+
+            uploadedStorageKey = makeStorageKey(
+                `tasks/${taskId}/submissions/${userId}`,
+                cleanFileName
+            );
 
             await uploadBufferToR2({
                 key: uploadedStorageKey,
@@ -937,7 +996,7 @@ router.post("/:taskId/submit", roleMiddleware(["STUDENT"]), upload.single("attac
 
         if (req.file) {
             data.attachmentStorageKey = uploadedStorageKey;
-            data.attachmentFileName = req.file.originalname;
+            data.attachmentFileName = cleanFileName;
             data.attachmentMimeType = req.file.mimetype || "application/octet-stream";
             data.attachmentSize = req.file.size;
         }
