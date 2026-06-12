@@ -48,12 +48,12 @@ model User {
   passwordResetTokens   PasswordResetToken[]
   sessionEmotionSamples SessionEmotionSample[]
 
-  materials                Material[]
-  materialsCreatedAssignments MaterialAssignment[] @relation("MaterialAssignmentCreator")
-  calendarEventsCreated    CalendarEvent[]
-  notifications            Notification[]
-  sessionParticipantStates SessionParticipantState[]
-  whiteboardOperations     WhiteboardOperation[]
+  materials                   Material[]
+  materialsCreatedAssignments MaterialAssignment[]      @relation("MaterialAssignmentCreator")
+  calendarEventsCreated       CalendarEvent[]
+  notifications               Notification[]
+  sessionParticipantStates    SessionParticipantState[]
+  whiteboardOperations        WhiteboardOperation[]
 
   groupsAsTeacher     Group[]
   groupMemberships    GroupMember[]
@@ -71,6 +71,9 @@ model User {
   notificationSettings UserNotificationSettings?
   preferences          UserPreference?
   integrations         UserIntegration[]
+
+  testsCreated    Test[]           @relation("TestCreator")
+  testSubmissions TestSubmission[] @relation("TestStudentSubmission")
 }
 
 model RefreshToken {
@@ -128,7 +131,7 @@ model Document {
 }
 
 model Group {
-  id        String @id @default(uuid())
+  id        String  @id @default(uuid())
   name      String
   teacherId String
   imageUrl  String?
@@ -144,6 +147,8 @@ model Group {
 
   materialAssignments MaterialAssignment[]
   calendarEvents      CalendarEvent[]
+
+  tests Test[]
 
   messages     GroupMessage[]
   chatSettings GroupChatSettings?
@@ -219,6 +224,8 @@ model Session {
   whiteboardOperations WhiteboardOperation[]
   materialAssignments  MaterialAssignment[]
   calendarEvents       CalendarEvent[]
+
+  tests Test[]
 
   scheduledStartAt DateTime?
   scheduledEndAt   DateTime?
@@ -380,8 +387,8 @@ model SessionMessage {
   sessionId String
   senderId  String
 
-  type String
-  text String
+  type       String
+  text       String
   attachment Json?
 
   channel String @default("public")
@@ -588,10 +595,10 @@ model Material {
 
   kind String @default("file")
 
-  fileName    String
-  mimeType    String?
-  storageKey  String
-  size        Int?
+  fileName   String
+  mimeType   String?
+  storageKey String
+  size       Int?
 
   thumbnailStorageKey String?
   durationSec         Int?
@@ -603,6 +610,7 @@ model Material {
   updatedAt DateTime @updatedAt
 
   assignments MaterialAssignment[]
+
   @@index([ownerId])
   @@index([kind])
   @@index([createdAt])
@@ -664,4 +672,126 @@ model Notification {
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId, createdAt])
+}
+
+model Test {
+  id          String  @id @default(uuid())
+  title       String
+  description String?
+
+  groupId   String?
+  sessionId String?
+
+  createdById String
+  createdBy   User   @relation("TestCreator", fields: [createdById], references: [id], onDelete: Cascade)
+
+  group   Group?   @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  session Session? @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  status String @default("draft") // draft | published | closed
+
+  timeLimitMinutes Int?
+  attemptsAllowed  Int  @default(1)
+
+  shuffleQuestions Boolean @default(false)
+  shuffleOptions   Boolean @default(false)
+
+  startsAt DateTime?
+  endsAt   DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  questions   TestQuestion[]
+  submissions TestSubmission[]
+
+  @@index([groupId])
+  @@index([sessionId])
+  @@index([createdById])
+  @@index([status])
+}
+
+model TestQuestion {
+  id     String @id @default(uuid())
+  testId String
+  test   Test   @relation(fields: [testId], references: [id], onDelete: Cascade)
+
+  type String @default("single_choice") // single_choice | multiple_choice | text
+
+  text            String
+  imageStorageKey String?
+
+  points Int @default(1)
+  order  Int @default(0)
+
+  explanation String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  options TestOption[]
+  answers TestAnswer[]
+
+  @@index([testId])
+}
+
+model TestOption {
+  id         String       @id @default(uuid())
+  questionId String
+  question   TestQuestion @relation(fields: [questionId], references: [id], onDelete: Cascade)
+
+  text            String?
+  imageStorageKey String?
+
+  isCorrect Boolean @default(false)
+
+  order Int @default(0)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([questionId])
+}
+
+model TestSubmission {
+  id     String @id @default(uuid())
+  testId String
+  test   Test   @relation(fields: [testId], references: [id], onDelete: Cascade)
+
+  studentId String
+  student   User   @relation("TestStudentSubmission", fields: [studentId], references: [id], onDelete: Cascade)
+
+  status String @default("submitted") // started | submitted
+
+  score    Float?
+  maxScore Float?
+
+  startedAt   DateTime  @default(now())
+  submittedAt DateTime?
+
+  answers TestAnswer[]
+
+  @@unique([testId, studentId])
+  @@index([testId])
+  @@index([studentId])
+}
+
+model TestAnswer {
+  id           String         @id @default(uuid())
+  submissionId String
+  submission   TestSubmission @relation(fields: [submissionId], references: [id], onDelete: Cascade)
+
+  questionId String
+  question   TestQuestion @relation(fields: [questionId], references: [id], onDelete: Cascade)
+
+  selectedOptionIds Json?
+  textAnswer        String?
+
+  isCorrect    Boolean?
+  pointsEarned Float?
+
+  createdAt DateTime @default(now())
+
+  @@index([submissionId])
+  @@index([questionId])
 }
