@@ -74,6 +74,10 @@ model User {
 
   testsCreated    Test[]           @relation("TestCreator")
   testSubmissions TestSubmission[] @relation("TestStudentSubmission")
+
+  tasksCreated          Task[]           @relation("TaskCreator")
+  taskSubmissions       TaskSubmission[] @relation("TaskStudentSubmission")
+  taskSubmissionsGraded TaskSubmission[] @relation("TaskSubmissionGrader")
 }
 
 model RefreshToken {
@@ -149,6 +153,7 @@ model Group {
   calendarEvents      CalendarEvent[]
 
   tests Test[]
+  tasks Task[]
 
   messages     GroupMessage[]
   chatSettings GroupChatSettings?
@@ -226,6 +231,7 @@ model Session {
   calendarEvents       CalendarEvent[]
 
   tests Test[]
+  tasks Task[]
 
   scheduledStartAt DateTime?
   scheduledEndAt   DateTime?
@@ -704,6 +710,7 @@ model Test {
 
   questions   TestQuestion[]
   submissions TestSubmission[]
+  tasks       Task[]
 
   @@index([groupId])
   @@index([sessionId])
@@ -794,4 +801,76 @@ model TestAnswer {
 
   @@index([submissionId])
   @@index([questionId])
+}
+
+model Task {
+  id          String  @id @default(uuid())
+  title       String
+  description String?
+
+  type   String @default("homework") // test | homework | file_upload | text_answer
+  status String @default("draft") // draft | published | closed | archived
+
+  deadline DateTime?
+  points   Float     @default(0)
+
+  groupId   String?
+  sessionId String?
+  testId    String?
+
+  createdById String
+  createdBy   User   @relation("TaskCreator", fields: [createdById], references: [id], onDelete: Cascade)
+
+  group   Group?   @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  session Session? @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  test    Test?    @relation(fields: [testId], references: [id], onDelete: SetNull)
+
+  submissions TaskSubmission[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([groupId])
+  @@index([sessionId])
+  @@index([testId])
+  @@index([createdById])
+  @@index([type])
+  @@index([status])
+  @@index([deadline])
+}
+
+model TaskSubmission {
+  id     String @id @default(uuid())
+  taskId String
+  task   Task   @relation(fields: [taskId], references: [id], onDelete: Cascade)
+
+  studentId String
+  student   User   @relation("TaskStudentSubmission", fields: [studentId], references: [id], onDelete: Cascade)
+
+  status String @default("submitted") // submitted | graded
+
+  textAnswer String?
+
+  attachmentStorageKey String?
+  attachmentFileName   String?
+  attachmentMimeType   String?
+  attachmentSize       Int?
+
+  score    Float?
+  feedback String?
+
+  submittedAt DateTime  @default(now())
+  gradedAt    DateTime?
+
+  gradedById String?
+  gradedBy   User?   @relation("TaskSubmissionGrader", fields: [gradedById], references: [id], onDelete: SetNull)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([taskId, studentId])
+  @@index([taskId])
+  @@index([studentId])
+  @@index([gradedById])
+  @@index([status])
 }

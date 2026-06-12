@@ -25,6 +25,7 @@ import calendarRouter from "./routes/calendar.js";
 import notificationsRouter from "./routes/notifications.js";
 import testsRoutes from "./routes/tests.js";
 import tests from "./routes/tests.js";
+import tasksRoutes from "./routes/tasks.js";
 
 const app = express()
 
@@ -70,6 +71,7 @@ app.use("/api/teacher", teacherRoutes)
 app.use("/api/admin", adminRoutes)
 app.use("/api/user", userSettingsRoutes);
 app.use("/api/tests", testsRoutes);
+app.use("/api/tasks", tasksRoutes);
 
 app.use("/notes/upload", noteUploadRoutes)
 
