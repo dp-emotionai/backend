@@ -4,25 +4,7 @@ import prisma from "../utils/prisma.js"
 
 let io
 
-function getAllowedOrigins() {
-    const configured = String(
-        process.env.WS_ALLOWED_ORIGINS ||
-        process.env.CORS_ORIGIN ||
-        ""
-    )
-        .split(",")
-        .map((value) => value.trim())
-        .filter(Boolean)
-
-    return Array.from(
-        new Set([
-            "https://www.konilai.space",
-            "https://elasweb.vercel.app",
-            "http://localhost:3000",
-            ...configured,
-        ])
-    )
-}
+const videoSessions = new Map()
 
 function getTokenFromSocket(socket) {
     const authToken = socket.handshake.auth?.token
@@ -34,6 +16,24 @@ function getTokenFromSocket(socket) {
     }
 
     return null
+}
+
+function getAllowedSocketOrigins() {
+    const configured = [
+        process.env.WS_ALLOWED_ORIGINS,
+        process.env.CORS_ORIGIN,
+    ]
+        .filter(Boolean)
+        .flatMap((value) => String(value).split(","))
+        .map((value) => value.trim())
+        .filter(Boolean)
+
+    return Array.from(new Set([
+        "https://www.konilai.space",
+        "https://elasweb.vercel.app",
+        "http://localhost:3000",
+        ...configured,
+    ]))
 }
 
 function normalizeRoom(room, id) {
@@ -103,10 +103,129 @@ async function canJoinRoom(user, room, id) {
     return false
 }
 
+function getVideoParticipant(socket, payload, sessionId) {
+    const user = socket.user
+    const role = user.role === "TEACHER" ? "teacher" : "student"
+    const fallbackFullName = [user.firstName, user.lastName]
+        .filter(Boolean)
+        .join(" ")
+        .trim()
+
+    return {
+        id: socket.id,
+        userId: user.id,
+        role,
+        sessionId,
+        email: user.email || payload.email || undefined,
+        firstName: user.firstName || payload.firstName || undefined,
+        lastName: user.lastName || payload.lastName || undefined,
+        fullName: payload.fullName || fallbackFullName || undefined,
+        avatarUrl: payload.avatarUrl || undefined,
+    }
+}
+
+function leaveVideoSession(socket) {
+    const sessionId = socket.data.videoSessionId
+    if (!sessionId) return
+
+    const roomKey = `session:${sessionId}`
+    const participants = videoSessions.get(sessionId)
+    const participant = participants?.get(socket.id)
+
+    participants?.delete(socket.id)
+
+    if (participants?.size === 0) {
+        videoSessions.delete(sessionId)
+    }
+
+    socket.data.videoSessionId = null
+    socket.leave(roomKey)
+
+    if (participant) {
+        socket.to(roomKey).emit("user-left", {
+            participant,
+        })
+
+        console.log("[WebRTC] participant left", {
+            sessionId,
+            socketId: socket.id,
+            userId: socket.user?.id,
+        })
+    }
+}
+
+function getJoinedVideoSession(socket) {
+    const sessionId = socket.data.videoSessionId
+    if (!sessionId) return null
+
+    const participants = videoSessions.get(sessionId)
+    if (!participants?.has(socket.id)) return null
+
+    return {
+        sessionId,
+        participants,
+    }
+}
+
+function emitSignalingError(socket, message, details = {}) {
+    console.warn("[WebRTC] signaling rejected", {
+        socketId: socket.id,
+        userId: socket.user?.id,
+        message,
+        ...details,
+    })
+
+    socket.emit("error", { message })
+}
+
+function relayWebRtcSignal(socket, eventName, data, fieldName) {
+    const joined = getJoinedVideoSession(socket)
+
+    if (!joined) {
+        emitSignalingError(socket, "Join the video session first", {
+            eventName,
+        })
+        return
+    }
+
+    const targetSocketId = typeof data?.to === "string" ? data.to : null
+    const signalValue = data?.[fieldName]
+
+    if (!targetSocketId || signalValue == null) {
+        emitSignalingError(socket, `Invalid ${eventName} payload`, {
+            eventName,
+            sessionId: joined.sessionId,
+            targetSocketId,
+        })
+        return
+    }
+
+    if (!joined.participants.has(targetSocketId)) {
+        emitSignalingError(socket, "Target participant is not in this session", {
+            eventName,
+            sessionId: joined.sessionId,
+            targetSocketId,
+        })
+        return
+    }
+
+    io.to(targetSocketId).emit(eventName, {
+        from: socket.id,
+        [fieldName]: signalValue,
+    })
+
+    console.log("[WebRTC] signal relayed", {
+        eventName,
+        sessionId: joined.sessionId,
+        from: socket.id,
+        to: targetSocketId,
+    })
+}
+
 export function initSocket(server) {
     io = new Server(server, {
         cors: {
-            origin: getAllowedOrigins(),
+            origin: getAllowedSocketOrigins(),
             credentials: true,
         },
     })
@@ -146,6 +265,7 @@ export function initSocket(server) {
 
             return next()
         } catch (e) {
+            console.error("[Socket.IO] authentication failed", e)
             return next(new Error("Unauthorized"))
         }
     })
@@ -173,13 +293,81 @@ export function initSocket(server) {
                 socket.join(String(roomId))
 
                 callback?.({ ok: true, roomId })
-            } catch {
+            } catch (error) {
+                console.error("[Socket.IO] joinRoom error", error)
                 callback?.({ ok: false, error: "Failed to join room" })
             }
         })
 
         socket.on("join", async (payload = {}, callback) => {
             try {
+                /**
+                 * WebRTC frontend contract:
+                 * { sessionId, role, email?, firstName?, lastName?, fullName?, avatarUrl? }
+                 */
+                if (payload.sessionId && payload.role && !payload.room && !payload.scope) {
+                    const sessionId = String(payload.sessionId)
+                    const allowed = await canJoinRoom(user, "session", sessionId)
+
+                    console.log("[WebRTC] join requested", {
+                        sessionId,
+                        socketId: socket.id,
+                        userId: user.id,
+                        requestedRole: payload.role,
+                        actualRole: user.role,
+                        allowed,
+                    })
+
+                    if (!allowed) {
+                        emitSignalingError(socket, "Forbidden", { sessionId })
+                        callback?.({ ok: false, error: "Forbidden" })
+                        return
+                    }
+
+                    leaveVideoSession(socket)
+
+                    const roomKey = `session:${sessionId}`
+                    let participants = videoSessions.get(sessionId)
+
+                    if (!participants) {
+                        participants = new Map()
+                        videoSessions.set(sessionId, participants)
+                    }
+
+                    const existingParticipants = Array.from(participants.values())
+                    const participant = getVideoParticipant(socket, payload, sessionId)
+
+                    participants.set(socket.id, participant)
+                    socket.data.videoSessionId = sessionId
+                    socket.join(roomKey)
+
+                    socket.emit("joined", {
+                        self: participant,
+                        participants: existingParticipants,
+                    })
+
+                    socket.to(roomKey).emit("user-joined", {
+                        participant,
+                    })
+
+                    callback?.({
+                        ok: true,
+                        sessionId,
+                        roomKey,
+                        self: participant,
+                        participants: existingParticipants,
+                    })
+
+                    console.log("[WebRTC] joined", {
+                        sessionId,
+                        socketId: socket.id,
+                        userId: user.id,
+                        participantCount: participants.size,
+                    })
+
+                    return
+                }
+
                 const room = payload.room || payload.scope
                 const id = payload.id || payload.groupId || payload.sessionId || user.id
 
@@ -213,6 +401,7 @@ export function initSocket(server) {
                 })
             } catch (e) {
                 console.error("[Socket.IO] join error", e)
+                emitSignalingError(socket, "Join failed")
                 callback?.({ ok: false, error: "Join failed" })
             }
         })
@@ -264,6 +453,12 @@ export function initSocket(server) {
         })
 
         socket.on("leave", (payload = {}, callback) => {
+            if (socket.data.videoSessionId && !payload.room && !payload.scope) {
+                leaveVideoSession(socket)
+                callback?.({ ok: true })
+                return
+            }
+
             const room = payload.room || payload.scope
             const id = payload.id || payload.groupId || payload.sessionId
             const roomKey = normalizeRoom(room, id)
@@ -343,39 +538,19 @@ export function initSocket(server) {
         })
 
         socket.on("webrtc-offer", (data = {}) => {
-            const roomId = getSignalRoom(data)
-
-            if (!roomId) return
-
-            socket.to(roomId).emit("webrtc-offer", {
-                ...data,
-                from: socket.id,
-                userId: user.id,
-            })
+            relayWebRtcSignal(socket, "webrtc-offer", data, "sdp")
         })
 
         socket.on("webrtc-answer", (data = {}) => {
-            const roomId = getSignalRoom(data)
-
-            if (!roomId) return
-
-            socket.to(roomId).emit("webrtc-answer", {
-                ...data,
-                from: socket.id,
-                userId: user.id,
-            })
+            relayWebRtcSignal(socket, "webrtc-answer", data, "sdp")
         })
 
         socket.on("webrtc-ice", (data = {}) => {
-            const roomId = getSignalRoom(data)
+            relayWebRtcSignal(socket, "webrtc-ice", data, "candidate")
+        })
 
-            if (!roomId) return
-
-            socket.to(roomId).emit("webrtc-ice", {
-                ...data,
-                from: socket.id,
-                userId: user.id,
-            })
+        socket.on("disconnecting", () => {
+            leaveVideoSession(socket)
         })
 
         socket.on("disconnect", () => {
