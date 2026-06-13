@@ -10,6 +10,9 @@ import {
     getDownloadUrlFromR2,
     deleteFromR2,
 } from "../utils/r2.js";
+import {
+    notifyTaskPublished,
+} from "../services/taskNotifications.js"
 
 const router = express.Router();
 
@@ -797,7 +800,18 @@ router.post(
                 include: getTaskInclude(),
             });
 
-            notifyTaskChanged(task, "created");
+            notifyTaskChanged(task, "created")
+
+            if (task.status === "published") {
+                try {
+                    await notifyTaskPublished(task)
+                } catch (notificationError) {
+                    console.error(
+                        "Failed to notify students about task",
+                        notificationError
+                    )
+                }
+            }
 
             return res.status(201).json(
                 mapTask(task)
@@ -1507,6 +1521,10 @@ router.patch(
                 updates.testId = null;
             }
 
+            const becamePublished =
+                task.status !== "published" &&
+                nextStatus === "published";
+
             const updated =
                 await prisma.task.update({
                     where: {
@@ -1515,6 +1533,24 @@ router.patch(
                     data: updates,
                     include: getTaskInclude(),
                 });
+
+            notifyTaskChanged(
+                updated,
+                "updated"
+            );
+
+            if (becamePublished) {
+                try {
+                    await notifyTaskPublished(updated);
+                } catch (notificationError) {
+                    console.error(
+                        "Failed to notify students about published task",
+                        notificationError
+                    );
+                }
+            }
+
+            return res.json(mapTask(updated));
 
             notifyTaskChanged(
                 updated,
