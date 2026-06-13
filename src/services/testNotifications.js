@@ -1,16 +1,17 @@
 import prisma from "../utils/prisma.js";
 import { sendMail } from "../utils/email.js";
 import { broadcastUserEvent } from "../socket/server.js";
+import {
+    isEligibleAssignmentRecipient,
+    logGroupMembers,
+    logNotificationRecipients,
+    matchesAssignmentNotification,
+} from "./assignmentNotificationRecipients.js";
 
 const FRONTEND_URL = (
     process.env.FRONTEND_URL ||
     "https://www.konilai.space"
 ).replace(/\/+$/, "");
-
-const normalizeLower = (value) =>
-    String(value || "")
-        .trim()
-        .toLowerCase();
 
 const escapeHtml = (value) =>
     String(value ?? "")
@@ -137,36 +138,15 @@ export async function notifyTestPublished(test) {
             },
         });
 
+    logGroupMembers(groupId, members);
+
     const recipients = members.filter(
-        (member) => {
-            const memberRole =
-                normalizeLower(member.role);
+        isEligibleAssignmentRecipient
+    );
 
-            const memberStatus =
-                normalizeLower(member.status);
-
-            const userRole =
-                normalizeLower(
-                    member.user?.role
-                );
-
-            const userStatus =
-                normalizeLower(
-                    member.user?.status
-                );
-
-            return (
-                member.user &&
-                memberRole === "student" &&
-                memberStatus === "active" &&
-                userRole === "student" &&
-                userStatus === "approved" &&
-                member.user
-                    .notificationSettings
-                    ?.assignmentNotifications !==
-                    false
-            );
-        }
+    logNotificationRecipients(
+        groupId,
+        recipients
     );
 
     if (recipients.length === 0) {
@@ -197,15 +177,16 @@ export async function notifyTestPublished(test) {
     const alreadyNotifiedUserIds =
         new Set(
             existingNotifications
-                .filter(
-                    (notification) =>
-                        notification.data &&
-                        typeof notification.data ===
-                            "object" &&
-                        String(
-                            notification.data
-                                .testId || ""
-                        ) === fullTest.id
+                .filter((notification) =>
+                    matchesAssignmentNotification(
+                        notification.data,
+                        {
+                            taskId:
+                            fullTest.id,
+                            testId:
+                            fullTest.id,
+                        }
+                    )
                 )
                 .map(
                     (notification) =>
@@ -245,34 +226,66 @@ export async function notifyTestPublished(test) {
             ? `Опубликован тест «${fullTest.title}». Начало: ${startsAtText}.`
             : `Опубликован тест «${fullTest.title}».`;
 
-    const createdNotifications =
-        await prisma.$transaction(
-            newRecipients.map((member) =>
-                prisma.notification.create({
-                    data: {
-                        userId:
-                            member.user.id,
-                        type: "task_assigned",
-                        title:
-                            notificationTitle,
-                        body:
-                            notificationBody,
+    newRecipients.forEach((member) => {
+        console.log("CREATING NOTIFICATION", {
+            userId: member.user.id,
+            entityId: fullTest.id,
+            type: "task_assigned",
+        });
+    });
+
+    let createdNotifications;
+
+    try {
+        createdNotifications =
+            await prisma.$transaction(
+                newRecipients.map((member) =>
+                    prisma.notification.create({
                         data: {
-                            taskId:
+                            userId:
+                            member.user.id,
+                            type: "task_assigned",
+                            title:
+                            notificationTitle,
+                            body:
+                            notificationBody,
+                            data: {
+                                taskId:
                                 fullTest.id,
-                            taskType: "test",
-                            testId:
+                                taskType: "test",
+                                testId:
                                 fullTest.id,
-                            groupId,
-                            sessionId:
+                                groupId,
+                                sessionId:
                                 fullTest.sessionId,
-                            href: testHref,
-                            category: "task",
+                                href: testHref,
+                                category: "task",
+                            },
                         },
-                    },
-                })
-            )
+                    })
+                )
+            );
+    } catch (error) {
+        console.error(
+            "NOTIFICATION CREATE FAILED",
+            error
         );
+        throw error;
+    }
+
+    createdNotifications.forEach(
+        (notification) => {
+            console.log(
+                "NOTIFICATION CREATED",
+                {
+                    id: notification.id,
+                    userId:
+                    notification.userId,
+                    data: notification.data,
+                }
+            );
+        }
+    );
 
     for (
         let index = 0;
@@ -301,15 +314,23 @@ export async function notifyTestPublished(test) {
                     notification
                 );
 
+            console.log(
+                "BROADCAST USER NOTIFICATION",
+                {
+                    userId:
+                    recipient.user.id,
+                    notificationId:
+                    notification.id,
+                }
+            );
+
             broadcastUserEvent(
                 recipient.user.id,
                 {
                     type:
                         "notification.new",
                     notification:
-                        mappedNotification,
-                    event:
-                        mappedNotification,
+                    mappedNotification,
                     countsDelta: {
                         totalUnread: 1,
                         taskUnread: 1,
@@ -321,9 +342,9 @@ export async function notifyTestPublished(test) {
                 "notifyTestPublished socket error",
                 {
                     userId:
-                        recipient.user.id,
+                    recipient.user.id,
                     testId:
-                        fullTest.id,
+                    fullTest.id,
                     error:
                         socketError?.message ||
                         socketError,
@@ -393,63 +414,63 @@ export async function notifyTestPublished(test) {
 
                     const html = [
                         `<p>${
-    studentName
-        ? `Здравствуйте, ${escapeHtml(
-            studentName
-        )}!`
-        : "Здравствуйте!"
-}</p>`,
+                            studentName
+                                ? `Здравствуйте, ${escapeHtml(
+                                    studentName
+                                )}!`
+                                : "Здравствуйте!"
+                        }</p>`,
                         `<p>Преподаватель опубликовал новый тест: <b>«${escapeHtml(
-    fullTest.title
-)}»</b>.</p>`,
+                            fullTest.title
+                        )}»</b>.</p>`,
                         startsAtText
                             ? `<p><b>Начало:</b> ${escapeHtml(
-    startsAtText
-)}</p>`
+                                startsAtText
+                            )}</p>`
                             : "",
                         endsAtText
                             ? `<p><b>Завершение:</b> ${escapeHtml(
-    endsAtText
-)}</p>`
+                                endsAtText
+                            )}</p>`
                             : "",
                         `<p><a href="${escapeHtml(
-testUrl
-)}" target="_blank" rel="noopener noreferrer">Открыть тест</a></p>`,
-].join("");
+                            testUrl
+                        )}" target="_blank" rel="noopener noreferrer">Открыть тест</a></p>`,
+                    ].join("");
 
-return sendMail({
-    to: email,
-    subject:
-        `Новый тест: ${fullTest.title}`,
-    text,
-    html,
-});
-}
-)
-);
-
-const emailCount =
-    emailResults.filter(
-        (result) =>
-            result.status ===
-            "fulfilled" &&
-            !result.value?.skipped
-    ).length;
-
-for (const result of emailResults) {
-    if (
-        result.status === "rejected"
-    ) {
-        console.error(
-            "notifyTestPublished email error",
-            result.reason
+                    return sendMail({
+                        to: email,
+                        subject:
+                            `Новый тест: ${fullTest.title}`,
+                        text,
+                        html,
+                    });
+                }
+            )
         );
-    }
-}
 
-return {
-    createdCount:
-    createdNotifications.length,
-    emailCount,
-};
+    const emailCount =
+        emailResults.filter(
+            (result) =>
+                result.status ===
+                "fulfilled" &&
+                !result.value?.skipped
+        ).length;
+
+    for (const result of emailResults) {
+        if (
+            result.status === "rejected"
+        ) {
+            console.error(
+                "notifyTestPublished email error",
+                result.reason
+            );
+        }
+    }
+
+    return {
+        createdCount:
+        createdNotifications.length,
+        emailCount,
+    };
 }

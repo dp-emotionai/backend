@@ -4,6 +4,26 @@ import prisma from "../utils/prisma.js"
 
 let io
 
+function getAllowedOrigins() {
+    const configured = String(
+        process.env.WS_ALLOWED_ORIGINS ||
+        process.env.CORS_ORIGIN ||
+        ""
+    )
+        .split(",")
+        .map((value) => value.trim())
+        .filter(Boolean)
+
+    return Array.from(
+        new Set([
+            "https://www.konilai.space",
+            "https://elasweb.vercel.app",
+            "http://localhost:3000",
+            ...configured,
+        ])
+    )
+}
+
 function getTokenFromSocket(socket) {
     const authToken = socket.handshake.auth?.token
     if (authToken) return authToken
@@ -86,10 +106,7 @@ async function canJoinRoom(user, room, id) {
 export function initSocket(server) {
     io = new Server(server, {
         cors: {
-            origin: [
-                "https://www.konilai.space",
-                "http://localhost:3000",
-            ],
+            origin: getAllowedOrigins(),
             credentials: true,
         },
     })

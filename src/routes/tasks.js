@@ -150,8 +150,8 @@ const mapTaskMaterial = (material) => {
         mimeType: material.mimeType,
         size: material.size,
         downloadUrl: `/api/tasks/${material.taskId}/materials/${material.id}/download-url`,
-createdAt: material.createdAt,
-};
+        createdAt: material.createdAt,
+    };
 };
 
 const mapTaskSubmission = (submission) => {
@@ -802,7 +802,28 @@ router.post(
 
             notifyTaskChanged(task, "created")
 
-            if (task.status === "published") {
+            const becamePublished =
+                task.status === "published";
+
+            console.log("TASK PUBLISH FLOW", {
+                taskId: task.id,
+                oldStatus: null,
+                requestedStatus: cleanStatus,
+                updatedStatus: task.status,
+                becamePublished,
+            });
+
+            if (becamePublished) {
+                console.log(
+                    "NOTIFICATION SERVICE CALLED",
+                    {
+                        entityType: "task",
+                        entityId: task.id,
+                        groupId: task.groupId,
+                        sessionId: task.sessionId,
+                    }
+                );
+
                 try {
                     await notifyTaskPublished(task)
                 } catch (notificationError) {
@@ -1534,12 +1555,33 @@ router.patch(
                     include: getTaskInclude(),
                 });
 
+            console.log("TASK PUBLISH FLOW", {
+                taskId,
+                oldStatus: task.status,
+                requestedStatus:
+                    status !== undefined
+                        ? status
+                        : null,
+                updatedStatus: updated.status,
+                becamePublished,
+            });
+
             notifyTaskChanged(
                 updated,
                 "updated"
             );
 
             if (becamePublished) {
+                console.log(
+                    "NOTIFICATION SERVICE CALLED",
+                    {
+                        entityType: "task",
+                        entityId: updated.id,
+                        groupId: updated.groupId,
+                        sessionId: updated.sessionId,
+                    }
+                );
+
                 try {
                     await notifyTaskPublished(updated);
                 } catch (notificationError) {
@@ -1549,13 +1591,6 @@ router.patch(
                     );
                 }
             }
-
-            return res.json(mapTask(updated));
-
-            notifyTaskChanged(
-                updated,
-                "updated"
-            );
 
             return res.json(mapTask(updated));
         } catch (e) {

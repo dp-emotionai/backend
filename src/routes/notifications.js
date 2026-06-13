@@ -143,7 +143,7 @@ router.patch(
             return res.json({
                 ok: true,
                 updatedCount:
-                    result.count,
+                result.count,
                 totalUnread: 0,
                 taskUnread: 0,
             });
@@ -171,7 +171,7 @@ router.patch(
             const taskId =
                 String(
                     req.params.taskId ||
-                        ""
+                    ""
                 ).trim();
 
             if (!userId) {
@@ -208,11 +208,17 @@ router.patch(
                         (notification) =>
                             notification.data &&
                             typeof notification.data ===
-                                "object" &&
-                            String(
-                                notification.data
-                                    .taskId || ""
-                            ) === taskId
+                            "object" &&
+                            (
+                                String(
+                                    notification.data
+                                        .taskId || ""
+                                ) === taskId ||
+                                String(
+                                    notification.data
+                                        .testId || ""
+                                ) === taskId
+                            )
                     )
                     .map(
                         (notification) =>
@@ -222,20 +228,20 @@ router.patch(
             const result =
                 notificationIds.length > 0
                     ? await prisma.notification.updateMany({
-                          where: {
-                              id: {
-                                  in: notificationIds,
-                              },
-                              userId,
-                              readAt: null,
-                          },
-                          data: {
-                              readAt: new Date(),
-                          },
-                      })
+                        where: {
+                            id: {
+                                in: notificationIds,
+                            },
+                            userId,
+                            readAt: null,
+                        },
+                        data: {
+                            readAt: new Date(),
+                        },
+                    })
                     : {
-                          count: 0,
-                      };
+                        count: 0,
+                    };
 
             const counts =
                 await getUnreadCounts(userId);
@@ -243,7 +249,7 @@ router.patch(
             return res.json({
                 ok: true,
                 updatedCount:
-                    result.count,
+                result.count,
                 ...counts,
             });
         } catch (error) {
@@ -295,13 +301,13 @@ router.patch(
                 notification.readAt
                     ? notification
                     : await prisma.notification.update({
-                          where: {
-                              id: notificationId,
-                          },
-                          data: {
-                              readAt: new Date(),
-                          },
-                      });
+                        where: {
+                            id: notificationId,
+                        },
+                        data: {
+                            readAt: new Date(),
+                        },
+                    });
 
             const counts =
                 await getUnreadCounts(userId);

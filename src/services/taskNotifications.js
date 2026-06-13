@@ -1,6 +1,12 @@
 import prisma from "../utils/prisma.js"
 import { sendMail } from "../utils/email.js"
 import { broadcastUserEvent } from "../socket/server.js"
+import {
+    isEligibleAssignmentRecipient,
+    logGroupMembers,
+    logNotificationRecipients,
+    matchesAssignmentNotification,
+} from "./assignmentNotificationRecipients.js"
 
 const DEFAULT_FRONTEND_URL = "https://www.konilai.space"
 const EMAIL_BATCH_SIZE = 5
@@ -124,11 +130,11 @@ async function resolveTaskGroupId(task) {
 }
 
 function buildTaskEmail({
-    student,
-    task,
-    groupName,
-    href,
-}) {
+                            student,
+                            task,
+                            groupName,
+                            href,
+                        }) {
     const frontendUrl = getFrontendUrl()
     const taskUrl = `${frontendUrl}${href}`
 
@@ -223,10 +229,10 @@ function buildTaskEmail({
             </div>
 
             ${
-            sessionTitle
-                ? `<div><b>Урок:</b> ${safeSessionTitle}</div>`
-                : ""
-        }
+        sessionTitle
+            ? `<div><b>Урок:</b> ${safeSessionTitle}</div>`
+            : ""
+    }
 
             <div>
                 <b>Дедлайн:</b> ${safeDeadline}
@@ -289,7 +295,7 @@ async function sendEmailsInBatches(jobs) {
                 console.error(
                     "[taskNotifications] email failed",
                     result.reason?.message ||
-                        result.reason
+                    result.reason
                 )
 
                 return
@@ -359,10 +365,13 @@ export async function notifyTaskPublished(task) {
                 name: true,
                 members: {
                     where: {
-                        status: "active",
                         removedAt: null,
                     },
                     select: {
+                        id: true,
+                        role: true,
+                        status: true,
+                        removedAt: true,
                         user: {
                             select: {
                                 id: true,
@@ -400,20 +409,16 @@ export async function notifyTaskPublished(task) {
         }
     }
 
-    const recipients = group.members
-        .map((member) => member.user)
-        .filter(Boolean)
-        .filter(
-            (user) =>
-                user.role === "STUDENT" &&
-                user.status === "APPROVED"
-        )
-        .filter(
-            (user) =>
-                user.notificationSettings
-                    ?.assignmentNotifications !==
-                false
-        )
+    logGroupMembers(groupId, group.members)
+
+    const recipients = group.members.filter(
+        isEligibleAssignmentRecipient
+    )
+
+    logNotificationRecipients(
+        groupId,
+        recipients
+    )
 
     if (recipients.length === 0) {
         return {
@@ -428,8 +433,16 @@ export async function notifyTaskPublished(task) {
     const texts =
         getNotificationTexts(task)
 
+    // The test publication flow also creates a published Task card.
+    // Store the test id as taskId for test notifications so both
+    // services use the same identity and duplicate protection works.
+    const notificationTaskId =
+        task.type === "test" && task.testId
+            ? task.testId
+            : task.id
+
     const notificationData = {
-        taskId: task.id,
+        taskId: notificationTaskId,
         taskType: task.type,
         groupId,
         sessionId:
@@ -439,28 +452,101 @@ export async function notifyTaskPublished(task) {
         category: "task",
     }
 
-    /*
-     * Сначала создаём все уведомления в базе.
-     * Если одно создание упадёт, транзакция
-     * не сохранит неполный список.
-     */
-    const notificationOperations =
-        recipients.map((student) =>
-            prisma.notification.create({
-                data: {
-                    userId: student.id,
-                    type: "task_assigned",
-                    title: texts.title,
-                    body: texts.body,
-                    data: notificationData,
-                },
-            })
-        )
+    const userIds = recipients.map(
+        (member) => member.user.id
+    )
 
-    const notifications =
-        await prisma.$transaction(
-            notificationOperations
+    const existingNotifications =
+        await prisma.notification.findMany({
+            where: {
+                userId: {
+                    in: userIds,
+                },
+                type: "task_assigned",
+            },
+            select: {
+                userId: true,
+                data: true,
+            },
+        })
+
+    const alreadyNotifiedUserIds = new Set(
+        existingNotifications
+            .filter((notification) =>
+                matchesAssignmentNotification(
+                    notification.data,
+                    {
+                        taskId:
+                        notificationTaskId,
+                        testId:
+                            task.testId || null,
+                    }
+                )
+            )
+            .map(
+                (notification) =>
+                    notification.userId
+            )
+    )
+
+    const newRecipients = recipients.filter(
+        (member) =>
+            !alreadyNotifiedUserIds.has(
+                member.user.id
+            )
+    )
+
+    if (newRecipients.length === 0) {
+        return {
+            skipped: true,
+            reason: "already-notified",
+            taskId: notificationTaskId,
+            groupId,
+            recipients: recipients.length,
+        }
+    }
+
+    newRecipients.forEach((member) => {
+        console.log("CREATING NOTIFICATION", {
+            userId: member.user.id,
+            entityId: notificationTaskId,
+            type: "task_assigned",
+        })
+    })
+
+    let notifications
+
+    try {
+        notifications =
+            await prisma.$transaction(
+                newRecipients.map((member) =>
+                    prisma.notification.create({
+                        data: {
+                            userId:
+                            member.user.id,
+                            type: "task_assigned",
+                            title: texts.title,
+                            body: texts.body,
+                            data: notificationData,
+                        },
+                    })
+                )
+            )
+    } catch (error) {
+        console.error(
+            "NOTIFICATION CREATE FAILED",
+            error
         )
+        throw error
+    }
+
+    notifications.forEach((notification) => {
+        console.log("NOTIFICATION CREATED", {
+            id: notification.id,
+            userId: notification.userId,
+            data: notification.data,
+        })
+    })
 
     let socketSent = 0
     let socketFailed = 0
@@ -468,7 +554,7 @@ export async function notifyTaskPublished(task) {
     notifications.forEach(
         (notification, index) => {
             const student =
-                recipients[index]
+                newRecipients[index].user
 
             if (
                 student.notificationSettings
@@ -478,6 +564,15 @@ export async function notifyTaskPublished(task) {
             }
 
             try {
+                console.log(
+                    "BROADCAST USER NOTIFICATION",
+                    {
+                        userId: student.id,
+                        notificationId:
+                        notification.id,
+                    }
+                )
+
                 broadcastUserEvent(
                     student.id,
                     {
@@ -489,10 +584,12 @@ export async function notifyTaskPublished(task) {
                             body: notification.body,
                             data: notification.data,
                             readAt:
-                                notification.readAt,
+                            notification.readAt,
                             createdAt:
-                                notification.createdAt,
-                            isRead: false,
+                            notification.createdAt,
+                            isRead: Boolean(
+                                notification.readAt
+                            ),
                         },
                         countsDelta: {
                             totalUnread: 1,
@@ -509,23 +606,23 @@ export async function notifyTaskPublished(task) {
                     "[taskNotifications] socket failed",
                     {
                         userId: student.id,
-                        taskId: task.id,
-                        error:
-                            error?.message ||
-                            error,
+                        taskId:
+                        notificationTaskId,
+                        error,
                     }
                 )
             }
         }
     )
 
-    const emailJobs = recipients
+    const emailJobs = newRecipients
+        .map((member) => member.user)
         .filter(
             (student) =>
                 student.email &&
                 student.notificationSettings
                     ?.emailNotifications !==
-                    false
+                false
         )
         .map((student) => {
             return async () => {
@@ -534,14 +631,14 @@ export async function notifyTaskPublished(task) {
                         student,
                         task,
                         groupName:
-                            group.name,
+                        group.name,
                         href,
                     })
 
                 return sendMail({
                     to: student.email,
                     subject:
-                        email.subject,
+                    email.subject,
                     text: email.text,
                     html: email.html,
                 })
@@ -555,22 +652,25 @@ export async function notifyTaskPublished(task) {
 
     const result = {
         ok: true,
-        taskId: task.id,
+        taskId: notificationTaskId,
         groupId,
         studentsFound:
-            group.members.length,
+        group.members.length,
         recipients:
-            recipients.length,
+        recipients.length,
+        duplicatesSkipped:
+            recipients.length -
+            newRecipients.length,
         notificationsCreated:
-            notifications.length,
+        notifications.length,
         socketSent,
         socketFailed,
         emailsSent:
-            emailResult.sent,
+        emailResult.sent,
         emailsSkipped:
-            emailResult.skipped,
+        emailResult.skipped,
         emailsFailed:
-            emailResult.failed,
+        emailResult.failed,
     }
 
     console.log(

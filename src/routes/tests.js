@@ -88,8 +88,8 @@ const mapOption = (option, includeCorrect = false) => ({
     text: option.text,
     imageStorageKey: option.imageStorageKey,
     imageUrl: option.imageStorageKey ? `/api/tests/options/${option.id}/image` : null,
-order: option.order,
-...(includeCorrect ? { isCorrect: option.isCorrect } : {}),
+    order: option.order,
+    ...(includeCorrect ? { isCorrect: option.isCorrect } : {}),
     createdAt: option.createdAt,
     updatedAt: option.updatedAt,
 });
@@ -1791,7 +1791,28 @@ router.patch(
                     },
                 });
 
+            console.log("TEST PUBLISH FLOW", {
+                testId,
+                oldStatus: test.status,
+                requestedStatus:
+                    status !== undefined
+                        ? status
+                        : null,
+                updatedStatus: updated.status,
+                becamePublished,
+            });
+
             if (becamePublished) {
+                console.log(
+                    "NOTIFICATION SERVICE CALLED",
+                    {
+                        entityType: "test",
+                        entityId: updated.id,
+                        groupId: updated.groupId,
+                        sessionId: updated.sessionId,
+                    }
+                );
+
                 try {
                     await notifyTestPublished(
                         updated
@@ -1934,7 +1955,25 @@ router.post(
                 );
             }
 
+            console.log("TEST PUBLISH FLOW", {
+                testId,
+                oldStatus: test.status,
+                requestedStatus: "published",
+                updatedStatus: updated.status,
+                becamePublished,
+            });
+
             if (becamePublished) {
+                console.log(
+                    "NOTIFICATION SERVICE CALLED",
+                    {
+                        entityType: "test",
+                        entityId: updated.id,
+                        groupId: updated.groupId,
+                        sessionId: updated.sessionId,
+                    }
+                );
+
                 try {
                     await notifyTestPublished(
                         updated
