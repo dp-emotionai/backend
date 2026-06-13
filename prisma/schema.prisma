@@ -814,6 +814,8 @@ model Task {
   deadline DateTime?
   points   Float     @default(0)
 
+  allowLateSubmission Boolean @default(false)
+
   groupId   String?
   sessionId String?
   testId    String?
@@ -826,6 +828,8 @@ model Task {
   test    Test?    @relation(fields: [testId], references: [id], onDelete: SetNull)
 
   submissions TaskSubmission[]
+
+  materials TaskMaterial[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -848,6 +852,8 @@ model TaskSubmission {
   student   User   @relation("TaskStudentSubmission", fields: [studentId], references: [id], onDelete: Cascade)
 
   status String @default("submitted") // submitted | graded
+
+  isLate Boolean @default(false)
 
   textAnswer String?
 
@@ -873,4 +879,20 @@ model TaskSubmission {
   @@index([studentId])
   @@index([gradedById])
   @@index([status])
+}
+
+model TaskMaterial {
+  id String @id @default(uuid())
+
+  taskId String
+  task   Task   @relation(fields: [taskId], references: [id], onDelete: Cascade)
+
+  storageKey String
+  fileName   String
+  mimeType   String?
+  size       Int?
+
+  createdAt DateTime @default(now())
+
+  @@index([taskId])
 }
