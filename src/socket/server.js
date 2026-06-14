@@ -4,6 +4,14 @@ import prisma from "../utils/prisma.js"
 
 let io
 
+/**
+ * WebRTC signaling state.
+ *
+ * sessionId -> Map<socketId, Participant>
+ *
+ * The frontend uses socket.id as ClientId and expects these events:
+ * joined, user-joined, user-left, webrtc-offer, webrtc-answer, webrtc-ice.
+ */
 const videoSessions = new Map()
 
 function getTokenFromSocket(socket) {
