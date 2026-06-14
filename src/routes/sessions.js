@@ -391,9 +391,32 @@ router.get("/:id/join-info", async (req, res) => {
             });
         }
 
-        const hasConsent = await prisma.consentRecord.findUnique({
-            where: { userId_sessionId: { userId, sessionId: id } },
-        });
+        const [sessionConsent, preferences] = await Promise.all([
+            prisma.consentRecord.findUnique({
+                where: {
+                    userId_sessionId: {
+                        userId,
+                        sessionId: id,
+                    },
+                },
+            }),
+
+            prisma.userPreference.findUnique({
+                where: {
+                    userId,
+                },
+                select: {
+                    emotionAnalysisConsent: true,
+                    emotionAnalysisConsentedAt: true,
+                },
+            }),
+        ]);
+
+        const hasGlobalConsent =
+            preferences?.emotionAnalysisConsent === true;
+
+        const hasConsent =
+            hasGlobalConsent || Boolean(sessionConsent);
 
         const allowedToJoin = isLive && !!hasConsent;
         let reason;
@@ -406,6 +429,8 @@ router.get("/:id/join-info", async (req, res) => {
             type: session.type,
             status: session.status,
             consentRequired,
+            hasConsent,
+            consentSource: hasGlobalConsent ? "global" : sessionConsent ? "session" : null,
             allowedToJoin,
             reason,
             groupName: session.group.name,
@@ -1194,13 +1219,47 @@ router.post("/:id/consent", roleMiddleware(["STUDENT"]), async (req, res) => {
             return res.status(404).json({ error: "Session not found" });
         }
 
-        await prisma.consentRecord.upsert({
-            where: { userId_sessionId: { userId, sessionId } },
-            create: { userId, sessionId },
-            update: {},
+        const consentedAt = new Date();
+
+        await prisma.$transaction([
+            prisma.userPreference.upsert({
+                where: {
+                    userId,
+                },
+                update: {
+                    emotionAnalysisConsent: true,
+                    emotionAnalysisConsentedAt: consentedAt,
+                },
+                create: {
+                    userId,
+                    emotionAnalysisConsent: true,
+                    emotionAnalysisConsentedAt: consentedAt,
+                },
+            }),
+
+            prisma.consentRecord.upsert({
+                where: {
+                    userId_sessionId: {
+                        userId,
+                        sessionId,
+                    },
+                },
+                create: {
+                    userId,
+                    sessionId,
+                    consentedAt,
+                },
+                update: {},
+            }),
+        ]);
+
+        return res.status(201).json({
+            ok: true,
+            sessionId,
+            hasConsent: true,
+            consentedAt: consentedAt.toISOString(),
         });
 
-        return res.status(201).json({ ok: true, sessionId });
     } catch (e) {
         console.error("POST /sessions/:id/consent", e);
         res.status(500).json({ error: "Failed to record consent" });

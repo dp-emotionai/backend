@@ -6,9 +6,84 @@ const router = express.Router();
 
 router.use(authMiddleware);
 
-/* ===============================
-   NOTIFICATION SETTINGS
-================================ */
+router.get("/consent", async (req, res) => {
+    try {
+        const preferences = await prisma.userPreference.findUnique({
+            where: {
+                userId: req.user.id,
+            },
+            select: {
+                emotionAnalysisConsent: true,
+                emotionAnalysisConsentedAt: true,
+            },
+        });
+
+        res.json({
+            hasConsent: preferences?.emotionAnalysisConsent === true,
+            consentedAt:
+                preferences?.emotionAnalysisConsentedAt?.toISOString() ?? null,
+        });
+    } catch (e) {
+        console.error("GET /user/consent", e);
+
+        res.status(500).json({
+            error: "Failed to fetch consent status",
+        });
+    }
+});
+
+router.patch("/consent", async (req, res) => {
+    try {
+        const { consent } = req.body || {};
+
+        if (typeof consent !== "boolean") {
+            return res.status(400).json({
+                error: "consent must be boolean",
+            });
+        }
+
+        const consentedAt = consent ? new Date() : null;
+
+        const preferences = await prisma.$transaction(async (tx) => {
+            const saved = await tx.userPreference.upsert({
+                where: {
+                    userId: req.user.id,
+                },
+                update: {
+                    emotionAnalysisConsent: consent,
+                    emotionAnalysisConsentedAt: consentedAt,
+                },
+                create: {
+                    userId: req.user.id,
+                    emotionAnalysisConsent: consent,
+                    emotionAnalysisConsentedAt: consentedAt,
+                },
+            });
+
+            if (!consent) {
+                await tx.consentRecord.deleteMany({
+                    where: {
+                        userId: req.user.id,
+                    },
+                });
+            }
+
+            return saved;
+        });
+
+        res.json({
+            hasConsent: preferences.emotionAnalysisConsent,
+            consentedAt:
+                preferences.emotionAnalysisConsentedAt?.toISOString() ?? null,
+        });
+    } catch (e) {
+        console.error("PATCH /user/consent", e);
+
+        res.status(500).json({
+            error: "Failed to update consent",
+        });
+    }
+});
 
 router.get("/notifications/settings", async (req, res) => {
     try {
