@@ -1,7 +1,6 @@
 import { Server } from "socket.io"
 import jwt from "jsonwebtoken"
 import prisma from "../utils/prisma.js"
-import { getAllowedOrigins } from "../config/cors.js"
 
 let io
 
@@ -17,6 +16,24 @@ function getTokenFromSocket(socket) {
     }
 
     return null
+}
+
+function getAllowedSocketOrigins() {
+    const configured = [
+        process.env.WS_ALLOWED_ORIGINS,
+        process.env.CORS_ORIGIN,
+    ]
+        .filter(Boolean)
+        .flatMap((value) => String(value).split(","))
+        .map((value) => value.trim())
+        .filter(Boolean)
+
+    return Array.from(new Set([
+        "https://www.konilai.space",
+        "https://elasweb.vercel.app",
+        "http://localhost:3000",
+        ...configured,
+    ]))
 }
 
 function normalizeRoom(room, id) {
@@ -207,9 +224,8 @@ function relayWebRtcSignal(socket, eventName, data, fieldName) {
 
 export function initSocket(server) {
     io = new Server(server, {
-        path: "/socket.io",
         cors: {
-            origin: getAllowedOrigins(),
+            origin: getAllowedSocketOrigins(),
             credentials: true,
         },
     })

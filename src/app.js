@@ -1,7 +1,6 @@
 import express from "express"
 import cors from "cors"
 import cookieParser from "cookie-parser"
-import { getAllowedOrigins } from "./config/cors.js"
 
 import rateLimit from "./middleware/rateLimit.js"
 import errorMiddleware from "./middleware/errorMiddleware.js"
@@ -34,7 +33,11 @@ app.set("trust proxy", 1)
 
 app.use(
     cors({
-        origin: getAllowedOrigins(),
+        origin: [
+            "https://www.konilai.space",
+            "https://elasweb.vercel.app",
+            "http://localhost:3000",
+        ],
         credentials: true,
     })
 )
