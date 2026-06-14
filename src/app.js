@@ -24,8 +24,8 @@ import materialsRouter from "./routes/materials.js";
 import calendarRouter from "./routes/calendar.js";
 import notificationsRouter from "./routes/notifications.js";
 import testsRoutes from "./routes/tests.js";
-import tests from "./routes/tests.js";
 import tasksRoutes from "./routes/tasks.js";
+import legalRoutes from "./routes/legal.js"
 
 const app = express()
 
@@ -48,7 +48,7 @@ app.use(rateLimit)
 app.use("/api/materials", materialsRouter);
 app.use("/api/calendar", calendarRouter);
 app.use("/api/notifications", notificationsRouter);
-
+app.use("/api/legal", legalRoutes);
 /* ROUTES */
 app.get("/", (req, res) => {
     res.json({ message: "Konil Backend Running", status: "ok" })
