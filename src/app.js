@@ -26,7 +26,7 @@ import notificationsRouter from "./routes/notifications.js";
 import testsRoutes from "./routes/tests.js";
 import tasksRoutes from "./routes/tasks.js";
 import legalRoutes from "./routes/legal.js"
-
+import lessonsRoutes from "./routes/lessons.js"
 const app = express()
 
 app.set("trust proxy", 1)
@@ -72,6 +72,7 @@ app.use("/api/admin", adminRoutes)
 app.use("/api/user", userSettingsRoutes);
 app.use("/api/tests", testsRoutes);
 app.use("/api/tasks", tasksRoutes);
+app.use("/api/lesson-plans", lessonPlanRoutes);
 
 app.use("/notes/upload", noteUploadRoutes)
 
