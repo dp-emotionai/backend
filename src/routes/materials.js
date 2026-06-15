@@ -152,7 +152,7 @@ const mapAssignedMaterial = (assignment) => ({
 
 router.use(authMiddleware);
 
-router.post("/upload", roleMiddleware(["TEACHER", "ADMIN"]), upload.single("file"), async (req, res) => {
+router.post("/upload", roleMiddleware(["TEACHER", "ADMIN", "STUDENT"]), upload.single("file"), async (req, res) => {
     try {
         if (!req.file) {
             return res.status(400).json({ error: "file is required" });
