@@ -67,6 +67,7 @@ model User {
   sessionNotes     SessionNote[]
   messageReads     MessageRead[]
   chatMutesCreated ChatMute[]       @relation("ChatMuteCreator")
+  lessonPlans      LessonPlan[]
 
   notificationSettings UserNotificationSettings?
   preferences          UserPreference?
@@ -229,6 +230,7 @@ model Session {
   whiteboardOperations WhiteboardOperation[]
   materialAssignments  MaterialAssignment[]
   calendarEvents       CalendarEvent[]
+  lessonPlans          LessonPlan[]
 
   tests Test[]
   tasks Task[]
@@ -898,4 +900,20 @@ model TaskMaterial {
   createdAt DateTime @default(now())
 
   @@index([taskId])
+}
+
+model LessonPlan {
+  id          String   @id @default(cuid())
+  sessionId   String
+  teacherId   String
+  date        DateTime
+  title       String
+  description String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  session Session @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  teacher User    @relation(fields: [teacherId], references: [id], onDelete: Cascade)
+
+  @@unique([sessionId, date])
 }
