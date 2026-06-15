@@ -36,6 +36,180 @@ async function ensureGroupAccess(groupId, userId, role) {
     return { ok: true, group };
 }
 
+
+function pct(value, digits = 0) {
+    const n = Number(value) || 0;
+    return Number(n.toFixed(digits));
+}
+
+function safeDivide(a, b) {
+    return b ? a / b : 0;
+}
+
+function formatDate(value) {
+    if (!value) return "—";
+    return new Date(value).toISOString().slice(0, 10);
+}
+
+async function buildGroupAnalyticsPayload(groupId, group) {
+    const [members, sessions, materialAssignments, tasks, tests] = await Promise.all([
+        prisma.groupMember.findMany({
+            where: { groupId, status: "active", removedAt: null },
+            include: { user: { select: { id: true, firstName: true, lastName: true, email: true } } },
+            orderBy: { addedAt: "asc" },
+        }),
+        prisma.session.findMany({
+            where: { groupId },
+            include: { summary: true, participantStates: true },
+            orderBy: { createdAt: "asc" },
+        }),
+        prisma.materialAssignment.findMany({
+            where: { groupId },
+            include: { material: { select: { kind: true, mimeType: true } } },
+            orderBy: { createdAt: "asc" },
+        }),
+        prisma.task.findMany({
+            where: { groupId, status: { not: "archived" } },
+            include: { submissions: true },
+            orderBy: { createdAt: "asc" },
+        }),
+        prisma.test.findMany({
+            where: { groupId, status: { not: "draft" } },
+            include: { submissions: true },
+            orderBy: { createdAt: "asc" },
+        }),
+    ]);
+
+    const memberCount = members.length;
+    const sessionsWithSummary = sessions.filter((s) => s.summary);
+    const avgEngagement = sessionsWithSummary.length
+        ? sessionsWithSummary.reduce((a, s) => a + (s.summary?.avgEngagement ?? 0), 0) / sessionsWithSummary.length
+        : 0;
+
+    const attendanceRows = sessions.map((s, index) => {
+        const joined = new Set(
+            s.participantStates
+                .filter((p) => p.joinedAt || p.status === "joined" || p.status === "online")
+                .map((p) => p.userId)
+        ).size;
+        return {
+            sessionId: s.id,
+            title: s.title,
+            label: s.title || `Session ${index + 1}`,
+            date: formatDate(s.startedAt ?? s.createdAt),
+            joined,
+            total: memberCount,
+            rate: pct(safeDivide(joined, memberCount) * 100),
+        };
+    });
+
+    const avgAttendance = attendanceRows.length
+        ? pct(attendanceRows.reduce((a, r) => a + r.rate, 0) / attendanceRows.length)
+        : 0;
+
+    const taskSubmissions = tasks.flatMap((t) => t.submissions);
+    const taskCompletionRate = pct(safeDivide(taskSubmissions.length, tasks.length * Math.max(memberCount, 1)) * 100);
+
+    const gradedTaskScores = taskSubmissions
+        .filter((s) => typeof s.score === "number")
+        .map((s) => Number(s.score));
+
+    const testSubmissions = tests.flatMap((t) => t.submissions);
+    const testPercents = testSubmissions
+        .filter((s) => typeof s.score === "number" && typeof s.maxScore === "number" && Number(s.maxScore) > 0)
+        .map((s) => (Number(s.score) / Number(s.maxScore)) * 100);
+
+    const averageScore = pct(
+        testPercents.length
+            ? testPercents.reduce((a, v) => a + v, 0) / testPercents.length
+            : gradedTaskScores.length
+                ? gradedTaskScores.reduce((a, v) => a + v, 0) / gradedTaskScores.length
+                : 0
+    );
+
+    const materialKindMap = new Map();
+    for (const assignment of materialAssignments) {
+        const mime = assignment.material?.mimeType || "";
+        const kind = assignment.material?.kind || "file";
+        let label = "Файл";
+        if (kind === "video" || mime.startsWith("video/")) label = "Видео";
+        else if (kind === "image" || mime.startsWith("image/")) label = "Сурет";
+        else if (mime.includes("pdf")) label = "PDF";
+        else if (mime.includes("presentation") || mime.includes("powerpoint")) label = "Презентация";
+        materialKindMap.set(label, (materialKindMap.get(label) || 0) + 1);
+    }
+
+    const materialBreakdown = Array.from(materialKindMap.entries()).map(([kind, count]) => ({ kind, count }));
+
+    const studentStats = members.map((member) => {
+        const userId = member.userId;
+        const attended = attendanceRows.filter((r) => {
+            const session = sessions.find((s) => s.id === r.sessionId);
+            return session?.participantStates.some((p) => p.userId === userId && (p.joinedAt || p.status === "joined" || p.status === "online"));
+        }).length;
+        const submittedTasks = taskSubmissions.filter((s) => s.studentId === userId).length;
+        const ownTestPercents = testSubmissions
+            .filter((s) => s.studentId === userId && typeof s.score === "number" && typeof s.maxScore === "number" && Number(s.maxScore) > 0)
+            .map((s) => (Number(s.score) / Number(s.maxScore)) * 100);
+        const score = ownTestPercents.length
+            ? ownTestPercents.reduce((a, v) => a + v, 0) / ownTestPercents.length
+            : 0;
+        return {
+            userId,
+            fullName: `${member.user.firstName || ""} ${member.user.lastName || ""}`.trim() || member.user.email,
+            email: member.user.email,
+            attendanceRate: pct(safeDivide(attended, sessions.length) * 100),
+            taskCompletionRate: pct(safeDivide(submittedTasks, tasks.length) * 100),
+            averageScore: pct(score),
+        };
+    });
+
+    const topStudents = [...studentStats]
+        .sort((a, b) => (b.averageScore + b.attendanceRate + b.taskCompletionRate) - (a.averageScore + a.attendanceRate + a.taskCompletionRate))
+        .slice(0, 8);
+
+    return {
+        groupId,
+        groupName: group.name,
+        totalSessions: sessions.length,
+        studentCount: memberCount,
+        materialCount: materialAssignments.length,
+        taskCount: tasks.length,
+        testCount: tests.length,
+        averageEngagement: pct(avgEngagement * 100),
+        averageAttendance: avgAttendance,
+        taskCompletionRate,
+        averageScore,
+        engagementTrend: sessionsWithSummary.slice(-10).map((s, index) => ({
+            sessionId: s.id,
+            label: s.title || `Session ${index + 1}`,
+            date: formatDate(s.startedAt ?? s.createdAt),
+            engagement: pct((s.summary?.avgEngagement ?? 0) * 100),
+        })),
+        attendanceTrend: attendanceRows.slice(-10),
+        materialBreakdown,
+        assignmentStatus: [
+            { status: "Орындалды", count: taskSubmissions.length },
+            { status: "Орындалмады", count: Math.max(tasks.length * memberCount - taskSubmissions.length, 0) },
+        ],
+        topStudents,
+        students: studentStats,
+    };
+}
+
+function drawBar(doc, label, value, x, y, width, height) {
+    const clamped = Math.max(0, Math.min(100, Number(value) || 0));
+    doc.fontSize(9).fillColor("#334155").text(label, x, y - 2, { width: 160 });
+    doc.roundedRect(x + 165, y, width, height, 5).fill("#e2e8f0");
+    doc.roundedRect(x + 165, y, (width * clamped) / 100, height, 5).fill("#2563eb");
+    doc.fillColor("#0f172a").fontSize(9).text(`${clamped}%`, x + 170 + width, y - 1, { width: 45, align: "right" });
+}
+
+function drawKpi(doc, label, value, x, y, w) {
+    doc.roundedRect(x, y, w, 58, 14).fill("#f8fafc").strokeColor("#e2e8f0").stroke();
+    doc.fillColor("#64748b").fontSize(8).text(label, x + 14, y + 12, { width: w - 28 });
+    doc.fillColor("#0f172a").fontSize(18).text(String(value), x + 14, y + 28, { width: w - 28 });
+}
 router.get("/session/:id/export", requireTeacherOrAdmin, async (req, res) => {
     try {
         const sessionId = req.params.id;
@@ -140,7 +314,7 @@ router.get("/session/:id/export", requireTeacherOrAdmin, async (req, res) => {
 router.get("/group/:id/export", requireTeacherOrAdmin, async (req, res) => {
     try {
         const groupId = req.params.id;
-        const format = (req.query.format || "csv").toLowerCase();
+        const format = (req.query.format || "pdf").toLowerCase();
         const userId = req.user.id;
         const role = req.user.role;
         const access = await ensureGroupAccess(groupId, userId, role);
@@ -148,51 +322,92 @@ router.get("/group/:id/export", requireTeacherOrAdmin, async (req, res) => {
             return res.status(access.status).json({ error: access.error });
         }
 
-        const sessions = await prisma.session.findMany({
-            where: { groupId },
-            include: { summary: true },
-            orderBy: { createdAt: "desc" },
-        });
-        const totalSessions = sessions.length;
-        const withSummary = sessions.filter((s) => s.summary != null);
-        const avgEngagement = withSummary.length
-            ? withSummary.reduce((a, s) => a + (s.summary?.avgEngagement ?? 0), 0) / withSummary.length
-            : 0;
-        const engagementTrend = withSummary.slice(0, 10).map((s) => s.summary?.avgEngagement ?? 0).reverse();
-        const payload = {
-            groupId,
-            groupName: access.group.name,
-            totalSessions,
-            avgEngagement,
-            engagementTrend,
-        };
+        const payload = await buildGroupAnalyticsPayload(groupId, access.group);
 
         if (format === "json") {
             res.setHeader("Content-Type", "application/json");
-            res.setHeader("Content-Disposition", `attachment; filename="group-${groupId}.json"`);
+            res.setHeader("Content-Disposition", `attachment; filename="group-${groupId}-analytics.json"`);
             return res.json(payload);
         }
         if (format === "csv") {
-            res.setHeader("Content-Type", "text/csv");
-            res.setHeader("Content-Disposition", `attachment; filename="group-${groupId}.csv"`);
+            res.setHeader("Content-Type", "text/csv; charset=utf-8");
+            res.setHeader("Content-Disposition", `attachment; filename="group-${groupId}-analytics.csv"`);
             res.flushHeaders();
-            res.write(`"groupId","${groupId}"\n`);
-            res.write(`"groupName","${String(access.group.name).replace(/"/g, '""')}"\n`);
-            res.write(`"totalSessions","${totalSessions}"\n`);
-            res.write(`"avgEngagement","${avgEngagement}"\n`);
-            res.write("engagementTrend\n");
-            engagementTrend.forEach((v) => res.write(`${v}\n`));
+            res.write("metric,value\n");
+            res.write(`groupName,"${String(payload.groupName).replace(/"/g, '""')}"\n`);
+            res.write(`students,${payload.studentCount}\n`);
+            res.write(`sessions,${payload.totalSessions}\n`);
+            res.write(`materials,${payload.materialCount}\n`);
+            res.write(`tasks,${payload.taskCount}\n`);
+            res.write(`tests,${payload.testCount}\n`);
+            res.write(`averageEngagement,${payload.averageEngagement}\n`);
+            res.write(`averageAttendance,${payload.averageAttendance}\n`);
+            res.write(`taskCompletionRate,${payload.taskCompletionRate}\n`);
+            res.write(`averageScore,${payload.averageScore}\n\n`);
+            res.write("student,email,attendanceRate,taskCompletionRate,averageScore\n");
+            for (const st of payload.students) {
+                res.write(`"${String(st.fullName).replace(/"/g, '""')}","${String(st.email).replace(/"/g, '""')}",${st.attendanceRate},${st.taskCompletionRate},${st.averageScore}\n`);
+            }
             return res.end();
         }
         if (format === "pdf") {
             res.setHeader("Content-Type", "application/pdf");
-            res.setHeader("Content-Disposition", `attachment; filename="group-${groupId}.pdf"`);
-            const doc = new PDFDocument({ margin: 50 });
+            res.setHeader("Content-Disposition", `attachment; filename="group-${groupId}-analytics.pdf"`);
+            const doc = new PDFDocument({ margin: 42, size: "A4" });
             doc.pipe(res);
-            doc.fontSize(18).text(`Group: ${access.group.name}`, { continued: false });
-            doc.text(`Group ID: ${groupId}`, { continued: false });
-            doc.text(`Total sessions: ${totalSessions}`, { continued: false });
-            doc.text(`Avg engagement: ${(avgEngagement * 100).toFixed(1)}%`, { continued: false });
+
+            doc.rect(0, 0, doc.page.width, 96).fill("#0f172a");
+            doc.fillColor("#ffffff").fontSize(22).text("Group analytics report", 42, 30);
+            doc.fillColor("#cbd5e1").fontSize(11).text(`${payload.groupName} • ${new Date().toISOString().slice(0, 10)}`, 42, 60);
+
+            let y = 126;
+            const w = 158;
+            drawKpi(doc, "Students", payload.studentCount, 42, y, w);
+            drawKpi(doc, "Sessions", payload.totalSessions, 215, y, w);
+            drawKpi(doc, "Materials", payload.materialCount, 388, y, w);
+            y += 78;
+            drawKpi(doc, "Avg engagement", `${payload.averageEngagement}%`, 42, y, w);
+            drawKpi(doc, "Attendance", `${payload.averageAttendance}%`, 215, y, w);
+            drawKpi(doc, "Task completion", `${payload.taskCompletionRate}%`, 388, y, w);
+
+            y += 92;
+            doc.fillColor("#0f172a").fontSize(15).text("Progress charts", 42, y);
+            y += 28;
+            drawBar(doc, "Engagement", payload.averageEngagement, 42, y, 260, 12); y += 25;
+            drawBar(doc, "Attendance", payload.averageAttendance, 42, y, 260, 12); y += 25;
+            drawBar(doc, "Task completion", payload.taskCompletionRate, 42, y, 260, 12); y += 25;
+            drawBar(doc, "Average score", payload.averageScore, 42, y, 260, 12);
+
+            y += 50;
+            doc.fillColor("#0f172a").fontSize(15).text("Recent sessions", 42, y);
+            y += 24;
+            doc.fillColor("#64748b").fontSize(9).text("Session", 42, y).text("Engagement", 330, y).text("Attendance", 430, y);
+            y += 14;
+            const attendanceBySessionId = new Map(payload.attendanceTrend.map((r) => [r.sessionId, r]));
+            for (const item of payload.engagementTrend.slice(-8)) {
+                if (y > 730) { doc.addPage(); y = 48; }
+                const attendance = attendanceBySessionId.get(item.sessionId);
+                doc.fillColor("#0f172a").fontSize(9).text(`${item.date} ${item.label}`, 42, y, { width: 260 });
+                doc.text(`${item.engagement}%`, 330, y, { width: 70 });
+                doc.text(`${attendance?.rate ?? 0}%`, 430, y, { width: 70 });
+                y += 18;
+            }
+
+            doc.addPage();
+            y = 48;
+            doc.fillColor("#0f172a").fontSize(18).text("Student summary", 42, y);
+            y += 32;
+            doc.fillColor("#64748b").fontSize(9).text("Student", 42, y).text("Attendance", 285, y).text("Tasks", 370, y).text("Score", 455, y);
+            y += 16;
+            for (const st of payload.students) {
+                if (y > 760) { doc.addPage(); y = 48; }
+                doc.fillColor("#0f172a").fontSize(9).text(st.fullName, 42, y, { width: 220 });
+                doc.fillColor("#475569").text(`${st.attendanceRate}%`, 285, y, { width: 70 });
+                doc.text(`${st.taskCompletionRate}%`, 370, y, { width: 70 });
+                doc.text(`${st.averageScore}%`, 455, y, { width: 70 });
+                y += 18;
+            }
+
             doc.end();
             return;
         }
@@ -345,28 +560,8 @@ router.get("/group/:groupId", requireTeacherOrAdmin, async (req, res) => {
             return res.status(access.status).json({ error: access.error });
         }
 
-        const sessions = await prisma.session.findMany({
-            where: { groupId },
-            include: { summary: true },
-            orderBy: { createdAt: "desc" },
-        });
-        const totalSessions = sessions.length;
-        const withEngagement = sessions.filter((s) => s.summary != null);
-        const avgEngagement = withEngagement.length
-            ? withEngagement.reduce((a, s) => a + (s.summary?.avgEngagement ?? 0), 0) / withEngagement.length
-            : 0;
-        const engagementTrend = withEngagement
-            .slice(0, 10)
-            .map((s) => s.summary?.avgEngagement ?? 0)
-            .reverse();
-
-        return res.json({
-            groupId,
-            groupName: access.group.name,
-            totalSessions,
-            avgEngagement,
-            engagementTrend,
-        });
+        const payload = await buildGroupAnalyticsPayload(groupId, access.group);
+        return res.json(payload);
     } catch (e) {
         console.error("GET /analytics/group/:groupId", e);
         return res.status(500).json({ error: "Failed to fetch group analytics" });
