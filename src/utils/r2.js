@@ -15,7 +15,7 @@ export const r2 = new S3Client({
     endpoint: `https://${process.env.R2_ACCOUNT_ID}.r2.cloudflarestorage.com`,
     credentials: {
         accessKeyId: process.env.R2_ACCESS_KEY_ID,
-            secretAccessKey: process.env.R2_SECRET_ACCESS_KEY,
+        secretAccessKey: process.env.R2_SECRET_ACCESS_KEY,
     },
 });
 
@@ -70,16 +70,17 @@ export async function getObjectFromR2(key) {
 
 export async function getDownloadUrlFromR2(
     key,
-    fileName
+    fileName,
+    mode = "download"
 ) {
+    const safeFileName = String(fileName || "file").replace(/[\r\n"]/g, "_");
+    const encodedFileName = encodeURIComponent(safeFileName);
+    const dispositionType = mode === "inline" ? "inline" : "attachment";
+
     const command = new GetObjectCommand({
         Bucket: bucket,
         Key: key,
-        ResponseContentDisposition: fileName
-            ? `attachment; filename="${encodeURIComponent(
-                fileName
-            )}"`
-            : undefined,
+        ResponseContentDisposition: `${dispositionType}; filename*=UTF-8''${encodedFileName}`,
     });
 
     return getSignedUrl(r2, command, {
