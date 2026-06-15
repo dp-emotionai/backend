@@ -531,6 +531,15 @@ router.delete("/:materialId", roleMiddleware(["TEACHER", "ADMIN"]), async (req, 
             return res.status(403).json({ error: "Forbidden" });
         }
 
+        const assignments = await prisma.materialAssignment.findMany({
+            where: { materialId },
+            select: {
+                id: true,
+                groupId: true,
+                sessionId: true,
+            },
+        });
+
         await deleteFromR2(material.storageKey);
 
         if (material.thumbnailStorageKey) {
@@ -540,6 +549,23 @@ router.delete("/:materialId", roleMiddleware(["TEACHER", "ADMIN"]), async (req, 
         await prisma.material.delete({
             where: { id: materialId },
         });
+
+        try {
+            const event = {
+                type: "material.deleted",
+                materialId,
+                id: materialId,
+                assignmentIds: assignments.map((assignment) => assignment.id),
+            };
+
+            const groupIds = Array.from(new Set(assignments.map((assignment) => assignment.groupId).filter(Boolean)));
+            const sessionIds = Array.from(new Set(assignments.map((assignment) => assignment.sessionId).filter(Boolean)));
+
+            for (const groupId of groupIds) broadcastGroupEvent(groupId, event);
+            for (const sessionId of sessionIds) broadcastSessionEvent(sessionId, event);
+        } catch (wsError) {
+            console.error("DELETE /materials/:materialId broadcast error", wsError);
+        }
 
         return res.json({ ok: true, id: materialId });
     } catch (e) {
@@ -660,16 +686,23 @@ router.post("/:materialId/assign", roleMiddleware(["TEACHER", "ADMIN"]), async (
             },
             include: {
                 assignedBy: { select: userSelect },
+                material: {
+                    include: {
+                        owner: { select: userSelect },
+                    },
+                },
             },
         });
 
         const response = mapAssignment(assignment);
+        const assignedMaterial = mapAssignedMaterial(assignment);
 
         try {
             const event = {
                 type: "material.assigned",
                 materialId,
                 assignment: response,
+                material: assignedMaterial,
             };
 
             if (assignment.groupId) broadcastGroupEvent(assignment.groupId, event);
