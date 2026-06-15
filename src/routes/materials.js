@@ -869,6 +869,61 @@ router.get("/:materialId/download", async (req, res) => {
             hasAccess = true;
         }
 
+        if (!hasAccess && role === "TEACHER") {
+            const now = new Date();
+
+            const assignment = await prisma.materialAssignment.findFirst({
+                where: {
+                    materialId,
+                    AND: [
+                        {
+                            OR: [
+                                {
+                                    group: {
+                                        is: {
+                                            teacherId: userId,
+                                        },
+                                    },
+                                },
+                                {
+                                    session: {
+                                        is: {
+                                            OR: [
+                                                { createdById: userId },
+                                                {
+                                                    group: {
+                                                        is: {
+                                                            teacherId: userId,
+                                                        },
+                                                    },
+                                                },
+                                            ],
+                                        },
+                                    },
+                                },
+                            ],
+                        },
+                        {
+                            OR: [
+                                { visibleFrom: null },
+                                { visibleFrom: { lte: now } },
+                            ],
+                        },
+                        {
+                            OR: [
+                                { visibleTo: null },
+                                { visibleTo: { gte: now } },
+                            ],
+                        },
+                    ],
+                },
+            });
+
+            if (assignment) {
+                hasAccess = true;
+            }
+        }
+
         if (!hasAccess && role === "STUDENT") {
             const memberships = await prisma.groupMember.findMany({
                 where: { userId },
