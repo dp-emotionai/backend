@@ -4,7 +4,6 @@ import prisma from "../utils/prisma.js";
 import authMiddleware from "../middleware/authMiddleware.js";
 import roleMiddleware from "../middleware/roleMiddleware.js";
 import {
-    getIO,
     broadcastSessionChatMessage,
     broadcastSessionEvent,
     broadcastUserEvent,
@@ -208,15 +207,19 @@ async function getSessionWithAccessContext(sessionId, userId, role) {
 }
 
 function mapSessionNote(note) {
+    const authorName = buildFullName(note.user) || note.user.email || null;
+
     return {
         id: note.id,
         sessionId: note.sessionId,
+        authorId: note.user.id,
+        authorName,
         author: {
             id: note.user.id,
             email: note.user.email,
             firstName: note.user.firstName,
             lastName: note.user.lastName,
-            fullName: buildFullName(note.user),
+            fullName: authorName,
             role: note.user.role,
         },
         text: note.text,
@@ -224,6 +227,21 @@ function mapSessionNote(note) {
         createdAt: note.createdAt,
         updatedAt: note.updatedAt,
     };
+}
+
+function broadcastSessionNote(sessionId, type, note) {
+    broadcastSessionEvent(sessionId, {
+        type,
+        ...mapSessionNote(note),
+    });
+}
+
+function broadcastSessionNoteDeleted(sessionId, noteId) {
+    broadcastSessionEvent(sessionId, {
+        type: "session:note_deleted",
+        id: noteId,
+        sessionId,
+    });
 }
 
 router.get("/", async (req, res) => {
@@ -715,8 +733,7 @@ router.post("/:id/notes", async (req, res) => {
         });
 
         try {
-            const io = getIO();
-            io.to(`session:${sessionId}`).emit("session:note_created", mapSessionNote(note));
+            broadcastSessionNote(sessionId, "session:note_created", note);
         } catch (wsError) {
             console.error("POST /sessions/:id/notes emit error", wsError);
         }
@@ -810,8 +827,7 @@ router.patch("/:id/notes/:noteId", async (req, res) => {
         });
 
         try {
-            const io = getIO();
-            io.to(`session:${sessionId}`).emit("session:note_updated", mapSessionNote(updated));
+            broadcastSessionNote(sessionId, "session:note_updated", updated);
         } catch (wsError) {
             console.error("PATCH /sessions/:id/notes/:noteId emit error", wsError);
         }
@@ -860,11 +876,7 @@ router.delete("/:id/notes/:noteId", async (req, res) => {
         });
 
         try {
-            const io = getIO();
-            io.to(`session:${sessionId}`).emit("session:note_deleted", {
-                id: noteId,
-                sessionId,
-            });
+            broadcastSessionNoteDeleted(sessionId, noteId);
         } catch (wsError) {
             console.error("DELETE /sessions/:id/notes/:noteId emit error", wsError);
         }
