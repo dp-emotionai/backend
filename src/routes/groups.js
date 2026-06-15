@@ -126,7 +126,17 @@ router.get("/:id", async (req, res) => {
         const group = await prisma.group.findUnique({
             where: { id: groupId },
             include: {
-                teacher: { select: { email: true, firstName: true, lastName: true } },
+                teacher: { select: { id: true, email: true, firstName: true, lastName: true } },
+                members: {
+                    include: {
+                        user: {
+                            select: { id: true, email: true, firstName: true, lastName: true, role: true },
+                        },
+                    },
+                },
+                sessions: {
+                    orderBy: { createdAt: "desc" },
+                },
                 _count: { select: { sessions: true } },
             },
         });
@@ -157,6 +167,29 @@ router.get("/:id", async (req, res) => {
             teacherName: [group.teacher.firstName, group.teacher.lastName].filter(Boolean).join(" "),
             sessionCount: group._count.sessions,
             createdAt: group.createdAt,
+
+            sessions: group.sessions.map((s) => ({
+                id: s.id,
+                title: s.title,
+                type: s.type,
+                status: s.status,
+                code: s.code,
+                startedAt: s.startedAt,
+                endedAt: s.endedAt,
+                scheduledStartAt: s.scheduledStartAt,
+                scheduledEndAt: s.scheduledEndAt,
+                createdAt: s.createdAt,
+            })),
+
+            members: group.members.map((m) => ({
+                id: m.user.id,
+                email: m.user.email,
+                fullName: [m.user.firstName, m.user.lastName].filter(Boolean).join(" ") || m.user.email,
+                role: m.user.role,
+                status: m.status,
+                addedAt: m.addedAt,
+                removedAt: m.removedAt,
+            })),
         });
     } catch (e) {
         console.error("GET /groups/:id", e);
