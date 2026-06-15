@@ -1,6 +1,7 @@
 import express from "express";
 import prisma from "../utils/prisma.js";
 import authMiddleware from "../middleware/authMiddleware.js";
+import { broadcastSessionEvent } from "../socket/server.js";
 
 const router = express.Router();
 
@@ -18,6 +19,17 @@ function nextDay(value) {
 
 function canEditPlan(user) {
     return user?.role === "TEACHER" || user?.role === "ADMIN";
+}
+
+function planPayload(type, plan) {
+    return {
+        type,
+        plan,
+        sessionId: plan.sessionId,
+        planId: plan.id,
+        date: plan.date instanceof Date ? plan.date.toISOString() : plan.date,
+        ts: new Date().toISOString(),
+    };
 }
 
 router.get("/session/:sessionId", authMiddleware, async (req, res) => {
@@ -97,6 +109,8 @@ router.post("/session/:sessionId", authMiddleware, async (req, res) => {
             },
         });
 
+        broadcastSessionEvent(sessionId, planPayload("lesson-plan.updated", plan));
+
         res.json(plan);
     } catch (error) {
         console.error("Save lesson plan error:", error);
@@ -122,6 +136,8 @@ router.patch("/:planId", authMiddleware, async (req, res) => {
             },
         });
 
+        broadcastSessionEvent(plan.sessionId, planPayload("lesson-plan.updated", plan));
+
         res.json(plan);
     } catch (error) {
         console.error("Update lesson plan error:", error);
@@ -137,9 +153,19 @@ router.delete("/:planId", authMiddleware, async (req, res) => {
             return res.status(403).json({ message: "Only teacher can delete lesson plan" });
         }
 
+        const plan = await prisma.lessonPlan.findUnique({
+            where: { id: planId },
+        });
+
+        if (!plan) {
+            return res.status(404).json({ message: "Lesson plan not found" });
+        }
+
         await prisma.lessonPlan.delete({
             where: { id: planId },
         });
+
+        broadcastSessionEvent(plan.sessionId, planPayload("lesson-plan.deleted", plan));
 
         res.json({ ok: true });
     } catch (error) {
