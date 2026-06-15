@@ -39,7 +39,8 @@ async function ensureGroupAccess(groupId, userId, role) {
 
 function pct(value, digits = 0) {
     const n = Number(value) || 0;
-    return Number(n.toFixed(digits));
+    const clamped = Math.max(0, Math.min(100, n));
+    return Number(clamped.toFixed(digits));
 }
 
 function safeDivide(a, b) {
