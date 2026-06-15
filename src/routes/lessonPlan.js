@@ -4,8 +4,6 @@ import authMiddleware from "../middleware/authMiddleware.js";
 
 const router = express.Router();
 
-const requireAuth = authMiddleware;
-
 function startOfDay(value) {
     const date = new Date(value);
     date.setHours(0, 0, 0, 0);
@@ -19,10 +17,10 @@ function nextDay(value) {
 }
 
 function canEditPlan(user) {
-    return user.role === "TEACHER" || user.role === "ADMIN";
+    return user?.role === "TEACHER" || user?.role === "ADMIN";
 }
 
-router.get("/session/:sessionId", requireAuth, async (req, res) => {
+router.get("/session/:sessionId", authMiddleware, async (req, res) => {
     try {
         const { sessionId } = req.params;
         const { date } = req.query;
@@ -48,7 +46,7 @@ router.get("/session/:sessionId", requireAuth, async (req, res) => {
     }
 });
 
-router.get("/session/:sessionId/all", requireAuth, async (req, res) => {
+router.get("/session/:sessionId/all", authMiddleware, async (req, res) => {
     try {
         const { sessionId } = req.params;
 
@@ -64,7 +62,7 @@ router.get("/session/:sessionId/all", requireAuth, async (req, res) => {
     }
 });
 
-router.post("/session/:sessionId", requireAuth, async (req, res) => {
+router.post("/session/:sessionId", authMiddleware, async (req, res) => {
     try {
         const { sessionId } = req.params;
         const { date, title, description } = req.body;
@@ -106,7 +104,7 @@ router.post("/session/:sessionId", requireAuth, async (req, res) => {
     }
 });
 
-router.patch("/:planId", requireAuth, async (req, res) => {
+router.patch("/:planId", authMiddleware, async (req, res) => {
     try {
         const { planId } = req.params;
         const { date, title, description } = req.body;
@@ -130,8 +128,8 @@ router.patch("/:planId", requireAuth, async (req, res) => {
         res.status(500).json({ message: "Failed to update lesson plan" });
     }
 });
-lfq
-router.delete("/:planId", requireAuth, async (req, res) => {
+
+router.delete("/:planId", authMiddleware, async (req, res) => {
     try {
         const { planId } = req.params;
 
