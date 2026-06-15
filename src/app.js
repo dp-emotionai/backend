@@ -26,7 +26,8 @@ import notificationsRouter from "./routes/notifications.js";
 import testsRoutes from "./routes/tests.js";
 import tasksRoutes from "./routes/tasks.js";
 import legalRoutes from "./routes/legal.js"
-import lessonsRoutes from "./routes/lessons.js"
+import lessonPlanRoutes from "./routes/lessonPlan.js"
+
 const app = express()
 
 app.set("trust proxy", 1)
