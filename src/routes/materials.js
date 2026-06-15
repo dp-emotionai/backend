@@ -30,7 +30,7 @@ const userSelect = {
 const getAuthUserId = (req) => req.user?.id || req.user?.userId;
 
 const detectMaterialKind = (mimeType = "", kind) => {
-    const allowed = ["video", "image", "document", "file"];
+    const allowed = ["video", "audio", "image", "document", "file"];
     const normalizedKind = kind ? String(kind).trim().toLowerCase() : "";
 
     if (allowed.includes(normalizedKind)) {
@@ -40,6 +40,7 @@ const detectMaterialKind = (mimeType = "", kind) => {
     const mime = String(mimeType || "").toLowerCase();
 
     if (mime.startsWith("video/")) return "video";
+    if (mime.startsWith("audio/")) return "audio";
     if (mime.startsWith("image/")) return "image";
 
     if (
@@ -60,6 +61,7 @@ const detectMaterialKind = (mimeType = "", kind) => {
 
 const getMaterialFolder = (kind) => {
     if (kind === "video") return "materials/videos";
+    if (kind === "audio") return "materials/audio";
     if (kind === "image") return "materials/images";
     if (kind === "document") return "materials/documents";
     return "materials/files";
