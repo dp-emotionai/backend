@@ -127,6 +127,17 @@ const mapAssignment = (assignment) => ({
     createdAt: assignment.createdAt,
 });
 
+const mapGroup = (group) => {
+    if (!group) return null;
+
+    return {
+        id: group.id,
+        name: group.name,
+        imageUrl: group.imageUrl || null,
+        teacherId: group.teacherId || null,
+    };
+};
+
 const mapAssignedMaterial = (assignment) => ({
     assignmentId: assignment.id,
     materialId: assignment.material.id,
@@ -144,6 +155,8 @@ const mapAssignedMaterial = (assignment) => ({
     assignedBy: mapUser(assignment.assignedBy),
     assignedAt: assignment.createdAt,
     groupId: assignment.groupId,
+    group: mapGroup(assignment.group),
+    groupName: assignment.group?.name || null,
     sessionId: assignment.sessionId,
     visibleFrom: assignment.visibleFrom,
     visibleTo: assignment.visibleTo,
@@ -321,6 +334,14 @@ router.get("/groups/:groupId/materials", async (req, res) => {
                     },
                 },
                 assignedBy: { select: userSelect },
+                group: {
+                    select: {
+                        id: true,
+                        name: true,
+                        imageUrl: true,
+                        teacherId: true,
+                    },
+                },
             },
             orderBy: { createdAt: "desc" },
         });
@@ -400,6 +421,14 @@ router.get("/sessions/:sessionId/materials", async (req, res) => {
                     },
                 },
                 assignedBy: { select: userSelect },
+                group: {
+                    select: {
+                        id: true,
+                        name: true,
+                        imageUrl: true,
+                        teacherId: true,
+                    },
+                },
             },
             orderBy: { createdAt: "desc" },
         });
@@ -448,6 +477,14 @@ router.get("/student/materials", roleMiddleware(["STUDENT"]), async (req, res) =
                     },
                 },
                 assignedBy: { select: userSelect },
+                group: {
+                    select: {
+                        id: true,
+                        name: true,
+                        imageUrl: true,
+                        teacherId: true,
+                    },
+                },
             },
             orderBy: { createdAt: "desc" },
         });
@@ -599,6 +636,14 @@ router.get("/:materialId/assignments", roleMiddleware(["TEACHER", "ADMIN"]), asy
             where: { materialId },
             include: {
                 assignedBy: { select: userSelect },
+                group: {
+                    select: {
+                        id: true,
+                        name: true,
+                        imageUrl: true,
+                        teacherId: true,
+                    },
+                },
             },
             orderBy: { createdAt: "desc" },
         });
