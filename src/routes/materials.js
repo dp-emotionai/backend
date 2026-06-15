@@ -161,7 +161,8 @@ router.post("/upload", roleMiddleware(["TEACHER", "ADMIN", "STUDENT"]), upload.s
         }
 
         const kind = detectMaterialKind(req.file.mimetype, req.body?.kind);
-        const storageKey = makeStorageKey(getMaterialFolder(kind), req.file.originalname);
+        const fileName = Buffer.from(req.file.originalname, "latin1").toString("utf8");
+        const storageKey = makeStorageKey(getMaterialFolder(kind), fileName);
 
         await uploadBufferToR2({
             key: storageKey,
@@ -172,7 +173,7 @@ router.post("/upload", roleMiddleware(["TEACHER", "ADMIN", "STUDENT"]), upload.s
         return res.status(201).json({
             storageKey,
             kind,
-            fileName: req.file.originalname,
+            fileName,
             mimeType: req.file.mimetype,
             size: req.file.size,
         });
@@ -776,7 +777,7 @@ router.delete("/:materialId/assignments/:assignmentId", roleMiddleware(["TEACHER
 
 router.get("/download-by-key", async (req, res) => {
     try {
-        const storageKey = String(req.query.key || "").trim();
+        const storageKey = String(req.query.key || req.query.storageKey || "").trim();
         const fileName = String(req.query.fileName || "").trim() || undefined;
 
         if (!storageKey) {
