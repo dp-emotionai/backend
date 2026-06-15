@@ -6,7 +6,7 @@ import { getIO } from "../socket/server.js";
 import {
     makeStorageKey,
     uploadBufferToR2,
-    getDownloadUrlFromR2,
+    getObjectFromR2,
     deleteFromR2,
 } from "../utils/r2.js";
 
@@ -279,9 +279,25 @@ router.get("/:id/image", async (req, res) => {
             return res.status(403).json({ error: "Forbidden" });
         }
 
-        const url = await getDownloadUrlFromR2(group.imageUrl);
+        const object = await getObjectFromR2(group.imageUrl);
 
-        return res.redirect(url);
+        res.setHeader("Content-Type", object.ContentType || "image/jpeg");
+        res.setHeader("Cache-Control", "private, max-age=60");
+
+        if (object.ContentLength) {
+            res.setHeader("Content-Length", String(object.ContentLength));
+        }
+
+        if (object.Body && typeof object.Body.pipe === "function") {
+            return object.Body.pipe(res);
+        }
+
+        const chunks = [];
+        for await (const chunk of object.Body) {
+            chunks.push(chunk);
+        }
+
+        return res.end(Buffer.concat(chunks));
     } catch (e) {
         console.error("GET /groups/:id/image", e);
         return res.status(500).json({ error: "Failed to get group image" });
