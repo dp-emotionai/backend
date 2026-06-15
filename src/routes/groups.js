@@ -475,6 +475,90 @@ router.post("/:id/messages", async (req, res) => {
     }
 });
 
+
+// GET /groups/:id/invitable-students — list registered students that can be invited
+router.get("/:id/invitable-students", requireRole("TEACHER", "ADMIN"), async (req, res) => {
+    const user = getUser(req);
+    const id = req.params.id;
+
+    try {
+        const group = await prisma.group.findUnique({ where: { id } });
+
+        if (!group) {
+            return res.status(404).json({ error: "Group not found" });
+        }
+
+        if (user.role !== "ADMIN" && group.teacherId !== user.userId) {
+            return res.status(403).json({ error: "Forbidden" });
+        }
+
+        const [students, members, pendingInvitations] = await Promise.all([
+            prisma.user.findMany({
+                where: {
+                    role: "STUDENT",
+                    status: { in: ["APPROVED", "LIMITED"] },
+                },
+                select: {
+                    id: true,
+                    email: true,
+                    firstName: true,
+                    lastName: true,
+                    status: true,
+                    createdAt: true,
+                },
+                orderBy: [
+                    { firstName: "asc" },
+                    { lastName: "asc" },
+                    { email: "asc" },
+                ],
+                take: 1000,
+            }),
+            prisma.groupMember.findMany({
+                where: { groupId: id },
+                select: { userId: true },
+            }),
+            prisma.invitation.findMany({
+                where: { groupId: id, status: "pending" },
+                select: { inviteeUserId: true, inviteeEmail: true },
+            }),
+        ]);
+
+        const memberIds = new Set(members.map((m) => m.userId));
+        const pendingUserIds = new Set(
+            pendingInvitations
+                .map((i) => i.inviteeUserId)
+                .filter(Boolean)
+        );
+        const pendingEmails = new Set(pendingInvitations.map((i) => i.inviteeEmail));
+
+        return res.json(
+            students
+                .filter((student) => !memberIds.has(student.id))
+                .map((student) => {
+                    const fullName = [student.firstName, student.lastName]
+                        .filter(Boolean)
+                        .join(" ");
+                    const alreadyInvited =
+                        pendingUserIds.has(student.id) || pendingEmails.has(student.email);
+
+                    return {
+                        id: student.id,
+                        email: student.email,
+                        firstName: student.firstName,
+                        lastName: student.lastName,
+                        fullName: fullName || student.email,
+                        status: student.status,
+                        alreadyInvited,
+                        createdAt: student.createdAt,
+                    };
+                })
+        );
+    } catch (e) {
+        console.error("GET /groups/:id/invitable-students", e);
+        return res.status(500).json({ error: "Failed to list invitable students" });
+    }
+});
+
 // GET /groups/:id/invitations — list invitations (teacher/admin)
 router.get("/:id/invitations", requireRole("TEACHER", "ADMIN"), async (req, res) => {
     const user = getUser(req);
