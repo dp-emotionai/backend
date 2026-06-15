@@ -73,7 +73,8 @@ export async function getDownloadUrlFromR2(
     fileName,
     mode = "download"
 ) {
-    const safeFileName = String(fileName || "file").replace(/[\r\n"]/g, "_");
+    const safeFileName = String(fileName || "file").replace(/[
+"]/g, "_");
     const encodedFileName = encodeURIComponent(safeFileName);
     const dispositionType = mode === "inline" ? "inline" : "attachment";
 

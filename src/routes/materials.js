@@ -161,8 +161,7 @@ router.post("/upload", roleMiddleware(["TEACHER", "ADMIN", "STUDENT"]), upload.s
         }
 
         const kind = detectMaterialKind(req.file.mimetype, req.body?.kind);
-        const fileName = Buffer.from(req.file.originalname, "latin1").toString("utf8");
-        const storageKey = makeStorageKey(getMaterialFolder(kind), fileName);
+        const storageKey = makeStorageKey(getMaterialFolder(kind), req.file.originalname);
 
         await uploadBufferToR2({
             key: storageKey,
@@ -173,7 +172,7 @@ router.post("/upload", roleMiddleware(["TEACHER", "ADMIN", "STUDENT"]), upload.s
         return res.status(201).json({
             storageKey,
             kind,
-            fileName,
+            fileName: req.file.originalname,
             mimeType: req.file.mimetype,
             size: req.file.size,
         });
