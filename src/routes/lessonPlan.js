@@ -1,8 +1,10 @@
 import express from "express";
 import prisma from "../utils/prisma.js";
-import { requireAuth } from "../middleware/auth.js";
+import authMiddleware from "../middleware/authMiddleware.js";
 
 const router = express.Router();
+
+const requireAuth = authMiddleware;
 
 function startOfDay(value) {
     const date = new Date(value);
@@ -20,7 +22,6 @@ function canEditPlan(user) {
     return user.role === "TEACHER" || user.role === "ADMIN";
 }
 
-// получить план на конкретный день
 router.get("/session/:sessionId", requireAuth, async (req, res) => {
     try {
         const { sessionId } = req.params;
@@ -47,7 +48,6 @@ router.get("/session/:sessionId", requireAuth, async (req, res) => {
     }
 });
 
-// получить все планы одной сессии
 router.get("/session/:sessionId/all", requireAuth, async (req, res) => {
     try {
         const { sessionId } = req.params;
@@ -64,7 +64,6 @@ router.get("/session/:sessionId/all", requireAuth, async (req, res) => {
     }
 });
 
-// создать или обновить план по дате
 router.post("/session/:sessionId", requireAuth, async (req, res) => {
     try {
         const { sessionId } = req.params;
@@ -107,7 +106,6 @@ router.post("/session/:sessionId", requireAuth, async (req, res) => {
     }
 });
 
-// изменить план по id
 router.patch("/:planId", requireAuth, async (req, res) => {
     try {
         const { planId } = req.params;
@@ -132,8 +130,7 @@ router.patch("/:planId", requireAuth, async (req, res) => {
         res.status(500).json({ message: "Failed to update lesson plan" });
     }
 });
-
-// удалить план
+lfq
 router.delete("/:planId", requireAuth, async (req, res) => {
     try {
         const { planId } = req.params;
