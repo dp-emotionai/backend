@@ -37,6 +37,38 @@ async function ensureGroupAccess(groupId, userId, role) {
 }
 
 
+function clamp01(value) {
+    const n = Number(value);
+    if (!Number.isFinite(n)) return 0;
+    if (n > 1 && n <= 100) return Math.max(0, Math.min(1, n / 100));
+    return Math.max(0, Math.min(1, n));
+}
+
+function sampleEngagement(sample) {
+    if (typeof sample.engagement === "number") return clamp01(sample.engagement);
+    return clamp01(1 - clamp01(sample.risk));
+}
+
+function countAttentionDropEpisodes(samples) {
+    let drops = 0;
+    let inDrop = false;
+
+    for (const sample of samples) {
+        const engagement = sampleEngagement(sample);
+        const risk = clamp01(sample.risk);
+        const isDrop = engagement < 0.55 || sample.state === "HIGH_RISK" || risk > 0.7;
+
+        if (isDrop && !inDrop) {
+            drops += 1;
+            inDrop = true;
+        } else if (!isDrop) {
+            inDrop = false;
+        }
+    }
+
+    return drops;
+}
+
 function pct(value, digits = 0) {
     const n = Number(value) || 0;
     const clamped = Math.max(0, Math.min(100, n));
@@ -232,11 +264,9 @@ router.get("/session/:id/export", requireTeacherOrAdmin, async (req, res) => {
             where: { sessionId },
             orderBy: { timestamp: "asc" },
         });
-        const stressEvents = samples.filter(
-            (s) => s.state === "HIGH_RISK" || s.risk > 0.7
-        ).length;
+        const stressEvents = countAttentionDropEpisodes(samples);
         const avgEngagement = summary?.avgEngagement ?? (samples.length
-            ? 1 - samples.reduce((a, s) => a + s.risk, 0) / samples.length
+            ? samples.reduce((a, s) => a + sampleEngagement(s), 0) / samples.length
             : 0);
 
         const payload = {
@@ -521,12 +551,10 @@ router.get("/session/:sessionId", requireTeacherOrAdmin, async (req, res) => {
             where: { sessionId },
             orderBy: { timestamp: "asc" },
         });
-        const stressEvents = samples.filter(
-            (s) => s.state === "HIGH_RISK" || s.risk > 0.7
-        ).length;
+        const stressEvents = countAttentionDropEpisodes(samples);
 
         const avgEngagement = summary?.avgEngagement ?? (samples.length
-            ? Math.max(0, 1 - samples.reduce((a, s) => a + s.risk, 0) / samples.length)
+            ? samples.reduce((a, s) => a + sampleEngagement(s), 0) / samples.length
             : 0);
         const attentionDrops = summary?.attentionDrops ?? stressEvents;
 

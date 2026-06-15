@@ -29,6 +29,43 @@ async function ensureUniqueCode() {
 const ML_SERVICE_URL = process.env.ML_SERVICE_URL || null;
 const BUCKET_SECONDS = 60;
 
+function clamp01(value) {
+    const n = Number(value);
+    if (!Number.isFinite(n)) return 0;
+    if (n > 1 && n <= 100) return Math.max(0, Math.min(1, n / 100));
+    return Math.max(0, Math.min(1, n));
+}
+
+function sampleEngagement(sample) {
+    if (typeof sample.engagement === "number") return clamp01(sample.engagement);
+    return clamp01(1 - clamp01(sample.risk));
+}
+
+function sampleStress(sample) {
+    if (typeof sample.stress === "number") return clamp01(sample.stress);
+    return clamp01(sample.risk);
+}
+
+function countAttentionDropEpisodes(samples) {
+    let drops = 0;
+    let inDrop = false;
+
+    for (const sample of samples) {
+        const engagement = sampleEngagement(sample);
+        const risk = clamp01(sample.risk);
+        const isDrop = engagement < 0.55 || sample.state === "HIGH_RISK" || risk > 0.7;
+
+        if (isDrop && !inDrop) {
+            drops += 1;
+            inDrop = true;
+        } else if (!isDrop) {
+            inDrop = false;
+        }
+    }
+
+    return drops;
+}
+
 async function aggregateSessionAnalytics(sessionId, startedAt, endedAt) {
     const samples = await prisma.sessionEmotionSample.findMany({
         where: { sessionId },
@@ -61,12 +98,10 @@ async function aggregateSessionAnalytics(sessionId, startedAt, endedAt) {
         return;
     }
 
-    const avgRisk = samples.reduce((s, x) => s + x.risk, 0) / samples.length;
-    const avgEngagement = Math.max(0, Math.min(1, 1 - avgRisk));
-    const attentionDrops = samples.filter(
-        (x) => x.state === "HIGH_RISK" || x.risk > 0.7
-    ).length;
-    const avgStress = avgRisk;
+    const avgRisk = samples.reduce((sum, x) => sum + clamp01(x.risk), 0) / samples.length;
+    const avgEngagement = samples.reduce((sum, x) => sum + sampleEngagement(x), 0) / samples.length;
+    const attentionDrops = countAttentionDropEpisodes(samples);
+    const avgStress = samples.reduce((sum, x) => sum + sampleStress(x), 0) / samples.length;
     const durationMs = startedAt && endedAt ? endedAt - startedAt : 0;
     const durationMinutes = durationMs ? durationMs / 60000 : null;
 
@@ -114,8 +149,9 @@ async function aggregateSessionAnalytics(sessionId, startedAt, endedAt) {
 
     for (const index of sortedIndices) {
         const list = bucketsByIndex.get(index);
-        const avgR = list.reduce((sum, x) => sum + x.risk, 0) / list.length;
-        const avgEng = Math.max(0, Math.min(1, 1 - avgR));
+        const avgR = list.reduce((sum, x) => sum + clamp01(x.risk), 0) / list.length;
+        const avgEng = list.reduce((sum, x) => sum + sampleEngagement(x), 0) / list.length;
+        const avgS = list.reduce((sum, x) => sum + sampleStress(x), 0) / list.length;
 
         await prisma.sessionTimelineBucket.create({
             data: {
@@ -124,7 +160,7 @@ async function aggregateSessionAnalytics(sessionId, startedAt, endedAt) {
                 fromSec: index * BUCKET_SECONDS,
                 toSec: (index + 1) * BUCKET_SECONDS,
                 avgEngagement: avgEng,
-                avgStress: avgR,
+                avgStress: avgS,
                 avgRisk: avgR,
             },
         });
