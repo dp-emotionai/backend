@@ -738,6 +738,32 @@ router.delete("/:materialId/assignments/:assignmentId", roleMiddleware(["TEACHER
     }
 });
 
+
+router.get("/download-by-key", async (req, res) => {
+    try {
+        const storageKey = String(req.query.key || "").trim();
+        const fileName = String(req.query.fileName || "").trim() || undefined;
+
+        if (!storageKey) {
+            return res.status(400).json({ error: "key is required" });
+        }
+
+        // Chat attachments are stored in R2 by storageKey, not as Material rows.
+        // Auth is already required by router.use(authMiddleware), so we return
+        // a short-lived signed Cloudflare R2 URL instead of /uploads/... local path.
+        const downloadUrl = await getDownloadUrlFromR2(storageKey, fileName);
+
+        return res.json({
+            downloadUrl,
+            url: downloadUrl,
+            fileName: fileName || storageKey.split("/").pop() || "file",
+        });
+    } catch (e) {
+        console.error("GET /materials/download-by-key", e);
+        return res.status(500).json({ error: "Failed to get download link" });
+    }
+});
+
 router.get("/:materialId/download", async (req, res) => {
     try {
         const materialId = req.params.materialId;
