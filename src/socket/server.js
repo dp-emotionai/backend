@@ -518,15 +518,36 @@ export function initSocket(server) {
             callback?.({ ok: true, event: payload })
         })
 
-        socket.on("typing", (data = {}) => {
-            const roomId = data.roomId || data.roomKey
+        function emitTyping(data = {}, isTyping = true) {
+            const roomId =
+                data.roomId ||
+                data.roomKey ||
+                (data.sessionId ? `session:${data.sessionId}` : null)
 
             if (!roomId) return
 
+            const senderName = [user.firstName, user.lastName]
+                .filter(Boolean)
+                .join(" ")
+                .trim() || user.email || "Участник"
+
             socket.to(roomId).emit("typing", {
                 ...data,
+                roomId,
+                sessionId: data.sessionId || (roomId.startsWith("session:") ? roomId.slice("session:".length) : null),
                 userId: user.id,
+                name: data.name || senderName,
+                email: user.email,
+                isTyping,
             })
+        }
+
+        socket.on("typing", (data = {}) => {
+            emitTyping(data, data.isTyping !== false)
+        })
+
+        socket.on("stop-typing", (data = {}) => {
+            emitTyping(data, false)
         })
 
         function getSignalRoom(data = {}) {
