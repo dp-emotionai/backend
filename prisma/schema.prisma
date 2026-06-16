@@ -289,10 +289,10 @@ model SessionTimelineBucket {
   fromSec Int
   toSec   Int
 
-  avgEngagement Float
-  avgStress     Float
-  avgFatigue    Float
-  avgRisk       Float
+  avgEngagement Float?
+  avgStress     Float?
+  avgFatigue    Float?
+  avgRisk       Float?
   avgConfidence Float?
 
   dominantEmotion String?
