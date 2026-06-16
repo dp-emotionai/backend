@@ -69,6 +69,39 @@ function countAttentionDropEpisodes(samples) {
     return drops;
 }
 
+
+
+function normalizeTimelineBuckets(timeline) {
+    if (!Array.isArray(timeline) || timeline.length === 0) return [];
+
+    const firstSec = Math.min(
+        ...timeline.map((bucket) => {
+            const raw = Number(bucket.fromSec ?? 0);
+            return Number.isFinite(raw) ? raw : 0;
+        })
+    );
+
+    return timeline.map((bucket) => {
+        const rawFrom = Number(bucket.fromSec ?? 0);
+        const rawTo = Number(bucket.toSec ?? rawFrom);
+        const fromSec = Math.max(0, Math.floor((Number.isFinite(rawFrom) ? rawFrom : 0) - firstSec));
+        const toSec = Math.max(fromSec, Math.floor((Number.isFinite(rawTo) ? rawTo : rawFrom) - firstSec));
+
+        return {
+            index: bucket.index,
+            fromSec,
+            toSec,
+            avgEngagement: bucket.avgEngagement,
+            avgStress: bucket.avgStress,
+            avgRisk: bucket.avgRisk,
+            avgFatigue: bucket.avgFatigue ?? undefined,
+            avgConfidence: bucket.avgConfidence ?? undefined,
+            dominantEmotion: bucket.dominantEmotion ?? null,
+            sampleCount: bucket.sampleCount ?? 0,
+        };
+    });
+}
+
 function pct(value, digits = 0) {
     const n = Number(value) || 0;
     const clamped = Math.max(0, Math.min(100, n));
@@ -275,14 +308,7 @@ router.get("/session/:id/export", requireTeacherOrAdmin, async (req, res) => {
             avgEngagement,
             stressEvents,
             attentionDrops: summary?.attentionDrops ?? stressEvents,
-            timeline: timeline.map((b) => ({
-                index: b.index,
-                fromSec: b.fromSec,
-                toSec: b.toSec,
-                avgEngagement: b.avgEngagement,
-                avgStress: b.avgStress,
-                avgRisk: b.avgRisk,
-            })),
+            timeline: normalizeTimelineBuckets(timeline),
         };
 
         if (format === "json") {
@@ -564,14 +590,7 @@ router.get("/session/:sessionId", requireTeacherOrAdmin, async (req, res) => {
             avgEngagement,
             stressEvents,
             attentionDrops,
-            timeline: timeline.map((b) => ({
-                index: b.index,
-                fromSec: b.fromSec,
-                toSec: b.toSec,
-                avgEngagement: b.avgEngagement,
-                avgStress: b.avgStress,
-                avgRisk: b.avgRisk,
-            })),
+            timeline: normalizeTimelineBuckets(timeline),
         });
     } catch (e) {
         console.error("GET /analytics/session/:sessionId", e);

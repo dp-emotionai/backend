@@ -291,7 +291,12 @@ model SessionTimelineBucket {
 
   avgEngagement Float
   avgStress     Float
+  avgFatigue    Float
   avgRisk       Float
+  avgConfidence Float?
+
+  dominantEmotion String?
+  sampleCount      Int @default(0)
 
   @@index([sessionId, index])
 }

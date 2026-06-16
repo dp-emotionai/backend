@@ -128,7 +128,7 @@ async function aggregateSessionAnalytics(sessionId, startedAt, endedAt) {
         },
     });
 
-    const startTs = startedAt ? startedAt.getTime() : samples[0].timestamp.getTime();
+    const startTs = samples[0].timestamp.getTime();
     const bucketsByIndex = new Map();
 
     for (const s of samples) {
